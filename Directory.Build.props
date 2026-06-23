@@ -1,0 +1,10 @@
+<Project>
+  <!-- 
+    WinUI 2.0.12 XAML 编译器与 .NET 9 SDK 兼容性补丁：
+    在 XAML 编译前，将 input.json 中的 null 值修正为正确类型
+  -->
+  <Target Name="FixXamlCompilerInputJson" BeforeTargets="MarkupCompilePass1">
+    <Exec Command="python &quot;$(MSBuildProjectDirectory)\fix_xaml_input.py&quot; &quot;$(MSBuildProjectDirectory)\obj\$(Platform)\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\input.json&quot;"
+          IgnoreStandardErrorWarningFormat="true" />
+  </Target>
+</Project>

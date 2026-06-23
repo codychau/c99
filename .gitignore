@@ -1,0 +1,35 @@
+.aider*
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+ARM64/
+*.appx
+*.appxbundle
+*.msix
+*.msixbundle
+
+# NuGet
+*.nupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+
+# IDE
+*.swp
+*.*~
+project.lock.json
+.DS_Store
+*.pyc
