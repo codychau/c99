@@ -904,6 +904,8 @@ namespace C99
             RunEngineBtn.Click -= OnRunEngineClick;
             RunEngineBtn.Click += OnStopEngineClick;
 
+            ModelSubDirSelector.IsEnabled = false;
+
             try
             {
                 switch (engine)
@@ -938,6 +940,7 @@ namespace C99
             RunEngineBtn.Content = "▶ 运行";
             RunEngineBtn.Click -= OnStopEngineClick;
             RunEngineBtn.Click += OnRunEngineClick;
+            ModelSubDirSelector.IsEnabled = true;
         }
 
         private void AppendLog(string text)
