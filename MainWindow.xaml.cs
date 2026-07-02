@@ -1378,32 +1378,37 @@ namespace C99
                         CreateNoWindow = true
                     };
 
-                    _runningProcess = new Process { StartInfo = psi };
-                    _runningProcess.OutputDataReceived += (s, e) =>
+                    var process = new Process { StartInfo = psi };
+                    _runningProcess = process;
+                    process.OutputDataReceived += (s, e) =>
                     {
                         if (e.Data != null)
                             _ = DispatcherQueue.TryEnqueue(() => AppendLog(e.Data));
                     };
-                    _runningProcess.ErrorDataReceived += (s, e) =>
+                    process.ErrorDataReceived += (s, e) =>
                     {
                         if (e.Data != null)
                             _ = DispatcherQueue.TryEnqueue(() => AppendLog($"[ERR] {e.Data}"));
                     };
 
-                    _runningProcess.Start();
-                    _runningProcess.BeginOutputReadLine();
-                    _runningProcess.BeginErrorReadLine();
+                    process.Start();
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
 
-                    _ = DispatcherQueue.TryEnqueue(() => AppendLog($"进程已启动 (PID: {_runningProcess.Id})"));
+                    var pid = process.Id;
+                    _ = DispatcherQueue.TryEnqueue(() => AppendLog($"进程已启动 (PID: {pid})"));
 
-                    _runningProcess.WaitForExit();
+                    process.WaitForExit();
 
                     _ = DispatcherQueue.TryEnqueue(() =>
                     {
-                        int exitCode = _runningProcess?.HasExited == true ? _runningProcess.ExitCode : -1;
+                        int exitCode = process.HasExited ? process.ExitCode : -1;
                         AppendLog($"进程已退出 (ExitCode: {exitCode})");
-                        _runningProcess = null;
-                        ResetRunButton();
+                        if (_runningProcess == process)
+                        {
+                            _runningProcess = null;
+                            ResetRunButton();
+                        }
                     });
                 }
                 catch (Exception ex)
