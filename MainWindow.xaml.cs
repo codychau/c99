@@ -1758,7 +1758,6 @@ namespace C99
 
         private void OnDreamFactoryConfigChanged(object sender, object e)
         {
-            if (DreamFactoryBuiltInModel == null || DreamFactoryBuiltInModel.SelectedItem == null) return;
             SaveDreamFactoryConfig();
         }
 
