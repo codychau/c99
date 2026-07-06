@@ -1971,6 +1971,20 @@ namespace C99
             }
             url = url.TrimEnd('/');
             string chatUrl = url + "/chat/completions";
+
+            string selectedModel = (SettingsExternalLLMModels.SelectedItem as ComboBoxItem)?.Tag as string
+                ?? SettingsExternalLLMModels.Text;
+            if (string.IsNullOrEmpty(selectedModel))
+            {
+                if (_config.ExternalLLMAvailableModels.Count > 0)
+                    selectedModel = _config.ExternalLLMAvailableModels[0];
+                else
+                {
+                    SettingsExternalLLMStatus.Text = "请先获取模型列表并选择模型";
+                    return;
+                }
+            }
+
             SettingsExternalLLMStatus.Text = "正在检测...";
 
             try
@@ -1978,7 +1992,7 @@ namespace C99
                 using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(15) };
                 var payload = System.Text.Json.JsonSerializer.Serialize(new
                 {
-                    model = "gpt-3.5-turbo",
+                    model = selectedModel,
                     messages = new[] { new { role = "user", content = "hi" } },
                     max_tokens = 1
                 });

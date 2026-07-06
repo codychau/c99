@@ -31,7 +31,7 @@ namespace C99.Models
         public string CustomApiKey { get; set; } = "";
 
         /// <summary>自定义模型名称</summary>
-        public string CustomModelName { get; set; } = "gpt-3.5-turbo";
+        public string CustomModelName { get; set; } = "";
 
         /// <summary>System Prompt</summary>
         public string SystemPrompt { get; set; } =
