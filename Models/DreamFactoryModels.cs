@@ -98,6 +98,9 @@ namespace C99.Models
         [JsonPropertyName("others")]
         public string Others { get; set; } = "";
 
+        [JsonPropertyName("emails")]
+        public string Emails { get; set; } = "";
+
         [JsonPropertyName("account")]
         public string Account { get; set; } = "";
     }

@@ -169,19 +169,26 @@ namespace C99.Services
             Log($"收到邮件报告 ({body.Length} 字节)");
 
             MailReportRequest? report;
+            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             try
             {
-                report = JsonSerializer.Deserialize<MailReportRequest>(body);
+                report = JsonSerializer.Deserialize<MailReportRequest>(body, jsonOptions);
             }
-            catch
+            catch (Exception ex)
             {
+                Log($"JSON 解析失败: {ex.Message}");
                 response.StatusCode = 400;
                 await WriteJsonAsync(response, new { error = "Invalid JSON" });
                 return;
             }
 
-            if (report == null || (report.Important.Length == 0 && string.IsNullOrEmpty(report.Others)))
+            bool hasImportant = report != null && report.Important != null && report.Important.Length > 0;
+            bool hasOthers = !string.IsNullOrEmpty(report?.Others);
+            bool hasEmails = !string.IsNullOrEmpty(report?.Emails);
+
+            if (report == null || (!hasImportant && !hasOthers && !hasEmails))
             {
+                Log("邮件报告数据为空，跳过处理");
                 await WriteJsonAsync(response, new { summary = "没有新的邮件数据" });
                 return;
             }
@@ -206,9 +213,16 @@ namespace C99.Services
             var engine = CreateLogicEngine();
             if (preLogic != null && preLogic.Enabled && preLogic.Actions.Count > 0)
             {
-                Log($"[前置逻辑] 开始执行 ({preLogic.Actions.Count} 个动作)");
-                await engine.ExecuteAsync(preLogic, context);
-                Log($"[前置逻辑] 执行完毕");
+                try
+                {
+                    Log($"[前置逻辑] 开始执行 ({preLogic.Actions.Count} 个动作)");
+                    await engine.ExecuteAsync(preLogic, context);
+                    Log($"[前置逻辑] 执行完毕");
+                }
+                catch (Exception ex)
+                {
+                    Log($"[前置逻辑] 执行异常: {ex.Message}");
+                }
             }
 
             string finalPrompt = context.TryGetValue("user_prompt", out var modPrompt) ? modPrompt : prompt;
@@ -223,18 +237,31 @@ namespace C99.Services
             catch (Exception ex)
             {
                 Log($"AI 调用失败: {ex.Message}");
-                summary = $"AI 调用失败: {ex.Message}\n\n以下是原始邮件摘要:\n\n" +
-                    string.Join("\n", report.Important.Select(m => $"- [{m.From}] {m.Subject}")) +
-                    "\n\n" + report.Others.Substring(0, Math.Min(500, report.Others.Length));
+                var fallbackLines = new System.Text.StringBuilder();
+                if (report.Important != null)
+                {
+                    foreach (var m in report.Important)
+                        fallbackLines.AppendLine($"- [{m.From}] {m.Subject}");
+                }
+                if (!string.IsNullOrEmpty(report.Others))
+                    fallbackLines.Append(report.Others.AsSpan(0, Math.Min(500, report.Others.Length)).ToString());
+                summary = $"AI 调用失败: {ex.Message}\n\n以下是原始邮件摘要:\n\n" + fallbackLines;
             }
 
             context["ai_response"] = summary;
 
             if (postLogic != null && postLogic.Enabled && postLogic.Actions.Count > 0)
             {
-                Log($"[后置逻辑] 开始执行 ({postLogic.Actions.Count} 个动作)");
-                await engine.ExecuteAsync(postLogic, context);
-                Log($"[后置逻辑] 执行完毕");
+                try
+                {
+                    Log($"[后置逻辑] 开始执行 ({postLogic.Actions.Count} 个动作)");
+                    await engine.ExecuteAsync(postLogic, context);
+                    Log($"[后置逻辑] 执行完毕");
+                }
+                catch (Exception ex)
+                {
+                    Log($"[后置逻辑] 执行异常: {ex.Message}");
+                }
             }
 
             string finalSummary = context.TryGetValue("ai_response", out var modSummary) ? modSummary : summary;
@@ -310,16 +337,28 @@ namespace C99.Services
 
         private string BuildPrompt(MailReportRequest report)
         {
+            if (!string.IsNullOrEmpty(report.Emails)
+                && (report.Important == null || report.Important.Length == 0)
+                && string.IsNullOrEmpty(report.Others))
+            {
+                string emails = report.Emails;
+                if (emails.Length > 32000)
+                    emails = emails[..32000] + "\n...(已截断)";
+                return "## 邮件列表\n\n" + emails;
+            }
+
             var sb = new StringBuilder();
             sb.AppendLine("## 重要联系人邮件");
-            foreach (var m in report.Important)
-                sb.AppendLine($"- [{m.From}] {m.Subject} ({m.Time})\n  {m.Preview}");
+            if (report.Important != null)
+            {
+                foreach (var m in report.Important)
+                    sb.AppendLine($"- [{m.From}] {m.Subject} ({m.Time})\n  {m.Preview}");
+            }
 
             if (!string.IsNullOrEmpty(report.Others))
             {
                 sb.AppendLine();
                 sb.AppendLine("## 其他邮件摘要");
-                // 截断到安全长度
                 string others = report.Others;
                 if (others.Length > 24000)
                     others = others[..24000] + "\n...(已截断)";
