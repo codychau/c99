@@ -418,14 +418,83 @@ namespace C99.Services
         {
             if (string.IsNullOrWhiteSpace(content)) return;
             sb.AppendLine($"## {title}");
-            foreach (var line in content.Split('\n'))
+
+            var lines = content.Split('\n');
+            var b64Buffer = new List<string>();
+
+            void FlushBase64()
             {
-                var trimmed = line.Trim();
-                if (trimmed.Length == 0) continue;
-                if (trimmed.Length > 200) trimmed = trimmed[..200] + "...";
-                sb.AppendLine(trimmed);
+                if (b64Buffer.Count == 0) return;
+                var joined = string.Join("", b64Buffer.Select(l => l.Trim()));
+                b64Buffer.Clear();
+                var decoded = TryDecodeBase64(joined);
+                if (decoded != null)
+                {
+                    if (decoded.Length > 500) decoded = decoded[..500] + "...";
+                    sb.AppendLine(decoded);
+                }
             }
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                var trimmed = lines[i].Trim();
+                if (trimmed.Length == 0)
+                {
+                    FlushBase64();
+                    continue;
+                }
+
+                if (IsBase64Line(trimmed))
+                {
+                    b64Buffer.Add(trimmed);
+                }
+                else
+                {
+                    FlushBase64();
+                    if (trimmed.Length > 200) trimmed = trimmed[..200] + "...";
+                    sb.AppendLine(trimmed);
+                }
+
+                if (i == lines.Length - 1) FlushBase64();
+            }
+
             sb.AppendLine();
+        }
+
+        private static bool IsBase64Line(string text)
+        {
+            if (text.Length < 40) return false;
+            int valid = 0, total = 0;
+            foreach (char c in text)
+            {
+                if (char.IsWhiteSpace(c)) continue;
+                total++;
+                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=')
+                    valid++;
+            }
+            return total >= 30 && valid * 100 / total >= 90;
+        }
+
+        private static string? TryDecodeBase64(string base64Text)
+        {
+            try
+            {
+                var cleaned = base64Text.Replace(" ", "").Replace("\t", "").Replace("\r", "").Replace("\n", "");
+                if (cleaned.Length % 4 != 0)
+                    cleaned = cleaned.PadRight(cleaned.Length + (4 - cleaned.Length % 4) % 4, '=');
+                var bytes = Convert.FromBase64String(cleaned);
+                var decoded = Encoding.UTF8.GetString(bytes);
+                if (decoded.Any(c => c >= 0x4E00 && c <= 0x9FFF))
+                    return decoded;
+                if (decoded.All(c => c >= 0x20 && c <= 0x7E || c == '\r' || c == '\n' || c == '\t'))
+                    return decoded;
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private async Task WriteJsonAsync(HttpListenerResponse response, object data, int statusCode = 200)
