@@ -25,6 +25,15 @@ namespace C99
 
         /// <summary>各引擎的参数快照（key=控件x:Name, value=当前值）</summary>
         public Dictionary<string, string> EngineParams { get; set; } = new();
+
+        /// <summary>外部大模型 API 地址</summary>
+        public string ExternalLLMApiUrl { get; set; } = "https://api.openai.com/v1";
+
+        /// <summary>外部大模型 API Key</summary>
+        public string ExternalLLMApiKey { get; set; } = "";
+
+        /// <summary>外部大模型可用模型列表（从 API 获取后缓存）</summary>
+        public List<string> ExternalLLMAvailableModels { get; set; } = new();
     }
 
     /// <summary>

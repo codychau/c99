@@ -95,7 +95,127 @@
 
                 <!-- AI梦工厂 -->
                 <StackPanel x:Name="AIDreamFactoryContent" Visibility="Collapsed">
-                    <TextBlock Text="AI梦工厂 - 释放你的AI创造力 🤖✨" FontSize="24"/>
+                    <TextBlock Text="AI梦工厂 - 你的AI小助手" FontSize="24" Margin="0,0,0,16"/>
+
+                    <!-- HTTP 服务控制 -->
+                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="HTTP 服务" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="端口：" VerticalAlignment="Center" FontSize="13"/>
+                                <TextBox x:Name="DreamFactoryPort" Grid.Column="1" Width="80" Height="32"
+                                         Text="9527" FontSize="13" Margin="4,0,12,0"/>
+                                <TextBlock x:Name="DreamFactoryStatus" Grid.Column="2"
+                                           Text="● 未启动" FontSize="13" Foreground="Gray" VerticalAlignment="Center"/>
+                                <Button x:Name="DreamFactoryToggleBtn" Grid.Column="3"
+                                        Content="▶ 启动" FontSize="13" Height="32" Width="80"
+                                        Click="OnDreamFactoryToggle"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- AI 模型配置 -->
+                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="AI 模型配置" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <TextBlock Text="模型来源" FontSize="13" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="DreamFactoryModelSource" Height="34" FontSize="13"
+                                      SelectionChanged="OnDreamFactoryModelSourceChanged" Margin="0,0,0,10">
+                                <ComboBoxItem Content="内置预设" Tag="BuiltIn" IsSelected="True"/>
+                                <ComboBoxItem Content="自定义外部模型" Tag="Custom"/>
+                            </ComboBox>
+                            <StackPanel x:Name="DreamFactoryBuiltInPanel" Visibility="Visible">
+                                <TextBlock Text="选择本地模型" FontSize="13" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="DreamFactoryBuiltInModel" Height="34" FontSize="13" Margin="0,0,0,10"
+                                          SelectionChanged="OnDreamFactoryBuiltInModelChanged">
+                                    <ComboBoxItem Content="Local llama.cpp (localhost:8080)" IsSelected="True"/>
+                                    <ComboBoxItem Content="Local ollama (localhost:11434)"/>
+                                    <ComboBoxItem Content="Local vllm (localhost:8000)"/>
+                                </ComboBox>
+                                <TextBlock Text="选择模型文件" FontSize="13" Margin="0,0,0,4"/>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="DreamFactoryBuiltInModelFile" Grid.Column="0"
+                                              Height="34" FontSize="13"
+                                              SelectionChanged="OnDreamFactoryConfigChanged"
+                                              PlaceholderText="自动扫描 .gguf 模型文件..."/>
+                                    <Button Grid.Column="1" Content="刷新" FontSize="12" Height="34" Width="60"
+                                            Margin="8,0,0,0" Click="OnRefreshBuiltInModelFiles"/>
+                                </Grid>
+                            </StackPanel>
+                            <StackPanel x:Name="DreamFactoryCustomPanel" Visibility="Collapsed">
+                                <TextBlock Text="使用设置中的外部大模型" FontSize="13" Margin="0,0,0,4" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="DreamFactoryCustomInfo" FontSize="12" Foreground="Gray"
+                                           Text="请在「设置」页面配置 API 地址和 Key" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+                                <TextBlock Text="选择模型" FontSize="13" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="DreamFactoryCustomModel" Height="34" FontSize="13"
+                                          SelectionChanged="OnDreamFactoryConfigChanged" Margin="0,0,0,10"
+                                          PlaceholderText="请先在设置中获取模型列表..."/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- System Prompt -->
+                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="System Prompt" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <TextBox x:Name="DreamFactoryPrompt" Height="120" FontSize="13"
+                                     TextWrapping="Wrap" AcceptsReturn="True"
+                                     TextChanged="OnDreamFactoryConfigChanged"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 工作流逻辑 -->
+                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="工作流逻辑（可选）" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <TextBlock Text="工作流名称（对应配置 key）" FontSize="13" Margin="0,0,0,4"/>
+                            <TextBox x:Name="DreamFactoryWorkflowName" Height="32" FontSize="13"
+                                     PlaceholderText="mail_report" TextChanged="OnDreamFactoryConfigChanged"
+                                     Margin="0,0,0,10"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="12"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Content="设计前置逻辑 (Pre-AI)"
+                                        FontSize="13" Height="34" Click="OnDesignPreAILogic"/>
+                                <Button Grid.Column="2" Content="设计后置逻辑 (Post-AI)"
+                                        FontSize="13" Height="34" Click="OnDesignPostAILogic"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 最近报告 -->
+                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="最近报告" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                <Button Grid.Column="1" Content="清空" FontSize="12" Height="28"
+                                        Click="OnClearDreamFactoryLogs"/>
+                            </Grid>
+                            <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
+                                <TextBox x:Name="DreamFactoryLog" IsReadOnly="True" FontFamily="Consolas"
+                                         FontSize="12" TextWrapping="Wrap" BorderThickness="0"
+                                         MinHeight="100"/>
+                            </ScrollViewer>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <!-- AI杂货铺 -->
@@ -197,7 +317,54 @@
 
                 <!-- 设置 -->
                 <StackPanel x:Name="SettingsContent" Visibility="Collapsed">
-                    <TextBlock Text="设置页面 ⚙️" FontSize="24"/>
+                    <TextBlock Text="设置" FontSize="24" Margin="0,0,0,16"/>
+
+                    <!-- 外部大模型设置 -->
+                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="外部大模型设置" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12"/>
+
+                            <TextBlock Text="API 地址（基础路径）" FontSize="13" Margin="0,0,0,4"/>
+                            <TextBox x:Name="SettingsExternalLLMUrl" Height="32" FontSize="13"
+                                     PlaceholderText="https://api.openai.com/v1"
+                                     TextChanged="OnSettingsExternalLLMChanged" Margin="0,0,0,10"/>
+
+                            <TextBlock Text="API Key" FontSize="13" Margin="0,0,0,4"/>
+                            <TextBox x:Name="SettingsExternalLLMKey" Height="32" FontSize="13"
+                                     PlaceholderText="sk-..." TextChanged="OnSettingsExternalLLMChanged"
+                                     Margin="0,0,0,10"/>
+
+                            <Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Content="获取模型列表" FontSize="13" Height="34"
+                                        Click="OnFetchExternalModels"/>
+                                <Button Grid.Column="1" Content="检测可用" FontSize="13" Height="34"
+                                        Click="OnCheckExternalModelHealth"/>
+                                <TextBlock x:Name="SettingsExternalLLMStatus" Grid.Column="2"
+                                           FontSize="13" VerticalAlignment="Center" Margin="8,0,0,0"
+                                           Foreground="Gray" TextWrapping="Wrap"/>
+                            </Grid>
+
+                            <TextBlock Text="可用模型" FontSize="13" Margin="0,0,0,4"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ComboBox x:Name="SettingsExternalLLMModels" Grid.Column="0"
+                                          Height="34" FontSize="13"
+                                          PlaceholderText="请先获取模型列表..."/>
+                                <Button Grid.Column="1" Content="清空缓存" FontSize="12" Height="34" Width="80"
+                                        Margin="8,0,0,0" Click="OnClearExternalModelCache"/>
+                            </Grid>
+
+                            <TextBlock Text="提示：在 AI梦工厂 → 自定义外部模型中选择「使用设置中的模型」后，将自动关联此处的配置。" FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <!-- 关于 -->
@@ -664,5 +831,57 @@
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>
+        <!-- AI报告通知弹窗 -->
+        <Border x:Name="DreamFactoryNotification"
+                Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                Width="380" MaxHeight="300" Margin="20"
+                Background="#F0FFFFFF" BorderBrush="#0078d4"
+                BorderThickness="2" CornerRadius="12"
+                Padding="16" Visibility="Collapsed">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="AI工作报告" FontSize="16" FontWeight="Bold"
+                               Foreground="#0078d4" Margin="0,0,0,8"/>
+                    <Button Grid.Column="1" Content="✕" FontSize="14" Width="28" Height="28"
+                            Click="OnDismissReportNotification" BorderThickness="0"
+                            Background="Transparent" Foreground="#888"/>
+                </Grid>
+                <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
+                    <TextBlock x:Name="DreamFactoryNotificationText"
+                               FontSize="13" TextWrapping="Wrap" LineHeight="20"/>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+
+        <!-- 通用通知弹窗（popup_notify） -->
+        <Border x:Name="GenericNotification"
+                Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                Width="380" MaxHeight="300" Margin="20"
+                Background="#F0FFFFF0" BorderBrush="#e8a000"
+                BorderThickness="2" CornerRadius="12"
+                Padding="16" Visibility="Collapsed">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="GenericNotificationTitle" Grid.Column="0"
+                               Text="通知" FontSize="16" FontWeight="Bold"
+                               Foreground="#e8a000" Margin="0,0,0,8"/>
+                    <Button Grid.Column="1" Content="✕" FontSize="14" Width="28" Height="28"
+                            Click="OnDismissGenericNotification" BorderThickness="0"
+                            Background="Transparent" Foreground="#888"/>
+                </Grid>
+                <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
+                    <TextBlock x:Name="GenericNotificationText"
+                               FontSize="13" TextWrapping="Wrap" LineHeight="20"/>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

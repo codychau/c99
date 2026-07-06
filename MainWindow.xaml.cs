@@ -3,13 +3,18 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
+using C99.Services;
+using C99.Models;
 
 namespace C99
 {
@@ -67,7 +72,16 @@ namespace C99
                     _runningProcess = null;
                 }
                 SaveAllParams();
+                SaveDreamFactoryConfig();
+                _dreamFactoryService?.Dispose();
             };
+
+            // 初始化 AI梦工厂
+            LoadDreamFactoryConfig();
+            if (_dreamConfig.AutoStart)
+            {
+                StartDreamFactoryService();
+            }
 
             ShowHome();
         }
@@ -120,7 +134,7 @@ namespace C99
         private void ShowHome() { HideAllContents(); HomeContent.Visibility = Visibility.Visible; }
         private void ShowAIDreamFactory() { HideAllContents(); AIDreamFactoryContent.Visibility = Visibility.Visible; }
         private void ShowAIGeneralStore() { HideAllContents(); AIGeneralStoreContent.Visibility = Visibility.Visible; }
-        private void ShowSettings() { HideAllContents(); SettingsContent.Visibility = Visibility.Visible; }
+        private void ShowSettings() { HideAllContents(); SettingsContent.Visibility = Visibility.Visible; LoadSettingsExternalLLMConfig(); }
         private void ShowAbout() { HideAllContents(); AboutContent.Visibility = Visibility.Visible; }
         private void ShowAIBase() { HideAllContents(); AIBaseContent.Visibility = Visibility.Visible; }
 
@@ -1504,6 +1518,486 @@ namespace C99
             };
             var result = await dialog.ShowAsync();
             return result == ContentDialogResult.Primary;
+        }
+
+        // ==================== AI梦工厂 ====================
+
+        private AIDreamFactoryService? _dreamFactoryService;
+        private DreamFactoryConfig _dreamConfig = new();
+        private DispatcherTimer? _notificationTimer;
+        private DispatcherTimer? _genericNotificationTimer;
+
+        private void LoadDreamFactoryConfig()
+        {
+            try
+            {
+                string configPath = System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(ConfigManager.GetConfigFilePath()) ?? AppContext.BaseDirectory,
+                    "dream_factory_config.json");
+                if (System.IO.File.Exists(configPath))
+                {
+                    var json = System.IO.File.ReadAllText(configPath);
+                    var cfg = System.Text.Json.JsonSerializer.Deserialize<DreamFactoryConfig>(json);
+                    if (cfg != null) _dreamConfig = cfg;
+                }
+            }
+            catch (Exception ex) { Debug.WriteLine($"加载AI梦工厂配置失败: {ex.Message}"); }
+            ApplyDreamConfigToUI();
+        }
+
+        private void SaveDreamFactoryConfig()
+        {
+            try
+            {
+                string configPath = System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(ConfigManager.GetConfigFilePath()) ?? AppContext.BaseDirectory,
+                    "dream_factory_config.json");
+                UpdateDreamConfigFromUI();
+                var json = System.Text.Json.JsonSerializer.Serialize(_dreamConfig,
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                System.IO.File.WriteAllText(configPath, json);
+            }
+            catch (Exception ex) { Debug.WriteLine($"保存AI梦工厂配置失败: {ex.Message}"); }
+        }
+
+        private void ApplyDreamConfigToUI()
+        {
+            DreamFactoryPort.Text = _dreamConfig.Port.ToString();
+            DreamFactoryWorkflowName.Text = _dreamConfig.CurrentWorkflow;
+
+            foreach (ComboBoxItem item in DreamFactoryModelSource.Items)
+            {
+                if (item.Tag?.ToString() == _dreamConfig.ModelSource)
+                { DreamFactoryModelSource.SelectedItem = item; break; }
+            }
+
+            DreamFactoryBuiltInPanel.Visibility = _dreamConfig.ModelSource == "BuiltIn"
+                ? Visibility.Visible : Visibility.Collapsed;
+            DreamFactoryCustomPanel.Visibility = _dreamConfig.ModelSource == "Custom"
+                ? Visibility.Visible : Visibility.Collapsed;
+
+            if (!string.IsNullOrEmpty(_dreamConfig.BuiltInModel))
+            {
+                foreach (ComboBoxItem item in DreamFactoryBuiltInModel.Items)
+                {
+                    if (item.Content?.ToString()?.StartsWith(_dreamConfig.BuiltInModel) == true)
+                    { DreamFactoryBuiltInModel.SelectedItem = item; break; }
+                }
+            }
+
+            ScanBuiltInModelFiles();
+            if (!string.IsNullOrEmpty(_dreamConfig.BuiltInModelFile))
+            {
+                foreach (ComboBoxItem item in DreamFactoryBuiltInModelFile.Items)
+                {
+                    if (item.Content?.ToString() == _dreamConfig.BuiltInModelFile ||
+                        item.Tag?.ToString() == _dreamConfig.BuiltInModelFile)
+                    { DreamFactoryBuiltInModelFile.SelectedItem = item; break; }
+                }
+            }
+
+            // 自定义外部模型 → 关联设置页面的配置
+            string extUrl = _config.ExternalLLMApiUrl;
+            string extKey = _config.ExternalLLMApiKey;
+            DreamFactoryCustomInfo.Text = string.IsNullOrEmpty(extUrl)
+                ? "请在「设置」页面配置 API 地址和 Key"
+                : $"API: {extUrl}  |  Key: {(string.IsNullOrEmpty(extKey) ? "(未设置)" : new string('*', Math.Min(extKey.Length, 16)))}";
+
+            PopulateCustomModelCombo();
+
+            DreamFactoryPrompt.Text = _dreamConfig.SystemPrompt;
+            UpdateDreamFactoryStatusUI();
+        }
+
+        private void PopulateCustomModelCombo()
+        {
+            if (DreamFactoryCustomModel == null) return;
+            DreamFactoryCustomModel.Items.Clear();
+            var models = _config.ExternalLLMAvailableModels;
+            if (models.Count == 0)
+            {
+                DreamFactoryCustomModel.PlaceholderText = "请先在设置中获取模型列表...";
+                return;
+            }
+            int selectIdx = -1;
+            for (int i = 0; i < models.Count; i++)
+            {
+                var item = new ComboBoxItem { Content = models[i], Tag = models[i] };
+                DreamFactoryCustomModel.Items.Add(item);
+                if (models[i] == _dreamConfig.CustomModelName)
+                    selectIdx = i;
+            }
+            if (selectIdx >= 0) DreamFactoryCustomModel.SelectedIndex = selectIdx;
+            DreamFactoryCustomModel.PlaceholderText = $"共 {models.Count} 个模型";
+        }
+
+        private void UpdateDreamConfigFromUI()
+        {
+            if (DreamFactoryPort == null || DreamFactoryWorkflowName == null) return;
+            if (int.TryParse(DreamFactoryPort.Text, out int port) && port > 0 && port < 65536)
+                _dreamConfig.Port = port;
+            _dreamConfig.CurrentWorkflow = DreamFactoryWorkflowName.Text.Trim();
+
+            if (DreamFactoryModelSource?.SelectedItem is ComboBoxItem srcItem)
+                _dreamConfig.ModelSource = srcItem.Tag?.ToString() ?? "BuiltIn";
+
+            if (DreamFactoryBuiltInModel?.SelectedItem is ComboBoxItem modelItem)
+                _dreamConfig.BuiltInModel = modelItem.Content?.ToString()?.Split(" (")[0] ?? "Local llama.cpp";
+
+            if (DreamFactoryBuiltInModelFile?.SelectedItem is ComboBoxItem fileItem)
+                _dreamConfig.BuiltInModelFile = fileItem.Tag?.ToString() ?? fileItem.Content?.ToString() ?? "";
+            else if (!string.IsNullOrEmpty(DreamFactoryBuiltInModelFile?.Text))
+                _dreamConfig.BuiltInModelFile = DreamFactoryBuiltInModelFile.Text.Trim();
+
+            if (DreamFactoryCustomModel?.SelectedItem is ComboBoxItem customItem)
+                _dreamConfig.CustomModelName = customItem.Tag?.ToString() ?? customItem.Content?.ToString() ?? "";
+            _dreamConfig.SystemPrompt = DreamFactoryPrompt?.Text ?? "";
+        }
+
+        private void UpdateDreamFactoryStatusUI()
+        {
+            bool running = _dreamFactoryService?.IsRunning == true;
+            DreamFactoryStatus.Text = running ? "● 运行中" : "● 未启动";
+            DreamFactoryStatus.Foreground = running
+                ? new SolidColorBrush(Microsoft.UI.Colors.Green)
+                : new SolidColorBrush(Microsoft.UI.Colors.Gray);
+            DreamFactoryToggleBtn.Content = running ? "⏹ 停止" : "▶ 启动";
+            DreamFactoryPort.IsEnabled = !running;
+        }
+
+        private void StartDreamFactoryService()
+        {
+            UpdateDreamConfigFromUI();
+            // 同步外部大模型配置（从设置 → 梦工厂）
+            if (_dreamConfig.ModelSource == "Custom")
+            {
+                _dreamConfig.CustomApiUrl = _config.ExternalLLMApiUrl;
+                _dreamConfig.CustomApiKey = _config.ExternalLLMApiKey;
+            }
+            _dreamFactoryService?.Dispose();
+            _dreamFactoryService = new AIDreamFactoryService(_dreamConfig);
+            _dreamFactoryService.OnLog += OnDreamFactoryLog;
+            _dreamFactoryService.OnReportGenerated += OnDreamFactoryReport;
+            _dreamFactoryService.OnPopupNotifyAsync += OnGenericPopupNotifyAsync;
+            _dreamFactoryService.OnPopupConfirmAsync += OnGenericPopupConfirmAsync;
+            _dreamFactoryService.Start();
+            UpdateDreamFactoryStatusUI();
+        }
+
+        private void OnDreamFactoryToggle(object sender, RoutedEventArgs e)
+        {
+            if (_dreamFactoryService?.IsRunning == true)
+            { _dreamFactoryService.Stop(); UpdateDreamFactoryStatusUI(); }
+            else { StartDreamFactoryService(); }
+        }
+
+        private void OnDreamFactoryModelSourceChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (DreamFactoryModelSource?.SelectedItem is not ComboBoxItem item) return;
+            if (DreamFactoryBuiltInPanel == null || DreamFactoryCustomPanel == null) return;
+            bool isBuiltIn = item.Tag?.ToString() == "BuiltIn";
+            DreamFactoryBuiltInPanel.Visibility = isBuiltIn ? Visibility.Visible : Visibility.Collapsed;
+            DreamFactoryCustomPanel.Visibility = isBuiltIn ? Visibility.Collapsed : Visibility.Visible;
+            OnDreamFactoryConfigChanged(sender, null!);
+        }
+
+        private void OnDreamFactoryBuiltInModelChanged(object sender, SelectionChangedEventArgs e)
+        {
+            OnDreamFactoryConfigChanged(sender, e);
+            ScanBuiltInModelFiles();
+        }
+
+        private void OnRefreshBuiltInModelFiles(object sender, RoutedEventArgs e)
+        {
+            ScanBuiltInModelFiles();
+        }
+
+        private void ScanBuiltInModelFiles()
+        {
+            DreamFactoryBuiltInModelFile?.Items.Clear();
+            string searchPath = _config.LLMSearchPath;
+            if (string.IsNullOrEmpty(searchPath) || !Directory.Exists(searchPath)) return;
+
+            try
+            {
+                var ggufFiles = Directory.GetFiles(searchPath, "*.gguf", SearchOption.AllDirectories);
+                foreach (var file in ggufFiles)
+                {
+                    string displayName = Path.GetFileName(file);
+                    string relativePath = file.Replace(searchPath, "").TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    string tag = file;
+                    var item = new ComboBoxItem
+                    {
+                        Content = displayName.Length > 60 ? displayName[..57] + "..." : displayName,
+                        Tag = tag
+                    };
+                    DreamFactoryBuiltInModelFile?.Items.Add(item);
+                }
+
+                if (DreamFactoryBuiltInModelFile?.Items.Count > 0)
+                    DreamFactoryBuiltInModelFile.PlaceholderText = $"共 {DreamFactoryBuiltInModelFile.Items.Count} 个模型";
+                else if (DreamFactoryBuiltInModelFile != null)
+                    DreamFactoryBuiltInModelFile.PlaceholderText = "未找到 .gguf 模型文件";
+            }
+            catch (Exception ex)
+            {
+                if (DreamFactoryBuiltInModelFile != null)
+                    DreamFactoryBuiltInModelFile.PlaceholderText = $"扫描失败: {ex.Message}";
+            }
+        }
+
+        private void OnDreamFactoryConfigChanged(object sender, object e)
+        {
+            if (DreamFactoryBuiltInModel == null || DreamFactoryBuiltInModel.SelectedItem == null) return;
+            UpdateDreamConfigFromUI();
+            SaveDreamFactoryConfig();
+        }
+
+        private void OnDreamFactoryLog(string msg)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                string nl = Environment.NewLine;
+                DreamFactoryLog.Text += $"[{DateTime.Now:HH:mm:ss}] {msg}{nl}";
+                var lines = DreamFactoryLog.Text.Split(nl);
+                if (lines.Length > 200) DreamFactoryLog.Text = string.Join(nl, lines[^200..]);
+            });
+        }
+
+        private void OnDreamFactoryReport(string summary, string account)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                string nl = Environment.NewLine;
+                string header = $"{nl}=== 工作报告 [{DateTime.Now:HH:mm}] {(string.IsNullOrEmpty(account) ? "" : $"账号:{account}")} ==={nl}";
+                DreamFactoryLog.Text += header + summary + nl;
+                DreamFactoryNotificationText.Text = summary;
+                DreamFactoryNotification.Visibility = Visibility.Visible;
+                _notificationTimer?.Stop();
+                _notificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+                _notificationTimer.Tick += (s, e) =>
+                { _notificationTimer?.Stop(); DreamFactoryNotification.Visibility = Visibility.Collapsed; };
+                _notificationTimer.Start();
+            });
+        }
+
+        private void OnDismissReportNotification(object sender, RoutedEventArgs e)
+        {
+            _notificationTimer?.Stop();
+            DreamFactoryNotification.Visibility = Visibility.Collapsed;
+        }
+
+        private void OnClearDreamFactoryLogs(object sender, RoutedEventArgs e)
+        {
+            DreamFactoryLog.Text = "";
+        }
+
+        private void OnDismissGenericNotification(object sender, RoutedEventArgs e)
+        {
+            _genericNotificationTimer?.Stop();
+            GenericNotification.Visibility = Visibility.Collapsed;
+        }
+
+        private void OnDesignPreAILogic(object sender, RoutedEventArgs e)
+        {
+            UpdateDreamConfigFromUI();
+            EnsureLogicPipelineExists();
+            if (_dreamConfig.LogicPipelines.TryGetValue(_dreamConfig.CurrentWorkflow, out var plc))
+            {
+                plc.PreAILogic ??= new LogicPipeline();
+                var win = new LogicDesignerWindow(plc.PreAILogic, $"{_dreamConfig.CurrentWorkflow} - 前置逻辑(Pre-AI)", pipeline =>
+                {
+                    plc.PreAILogic = pipeline;
+                    SaveDreamFactoryConfig();
+                });
+                win.Activate();
+            }
+        }
+
+        private void OnDesignPostAILogic(object sender, RoutedEventArgs e)
+        {
+            UpdateDreamConfigFromUI();
+            EnsureLogicPipelineExists();
+            if (_dreamConfig.LogicPipelines.TryGetValue(_dreamConfig.CurrentWorkflow, out var plc))
+            {
+                plc.PostAILogic ??= new LogicPipeline();
+                var win = new LogicDesignerWindow(plc.PostAILogic, $"{_dreamConfig.CurrentWorkflow} - 后置逻辑(Post-AI)", pipeline =>
+                {
+                    plc.PostAILogic = pipeline;
+                    SaveDreamFactoryConfig();
+                });
+                win.Activate();
+            }
+        }
+
+        private void EnsureLogicPipelineExists()
+        {
+            string wf = _dreamConfig.CurrentWorkflow;
+            if (string.IsNullOrEmpty(wf)) { _dreamConfig.CurrentWorkflow = "mail_report"; wf = "mail_report"; }
+            if (!_dreamConfig.LogicPipelines.ContainsKey(wf))
+                _dreamConfig.LogicPipelines[wf] = new LogicPipelineConfig();
+        }
+
+        private Task OnGenericPopupNotifyAsync(string title, string message, int autoDismissSeconds)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                GenericNotificationTitle.Text = title;
+                GenericNotificationText.Text = message;
+                GenericNotification.Visibility = Visibility.Visible;
+                _genericNotificationTimer?.Stop();
+                _genericNotificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(autoDismissSeconds) };
+                _genericNotificationTimer.Tick += (s, e) =>
+                { _genericNotificationTimer?.Stop(); GenericNotification.Visibility = Visibility.Collapsed; };
+                _genericNotificationTimer.Start();
+            });
+            return Task.CompletedTask;
+        }
+
+        private Task<bool> OnGenericPopupConfirmAsync(string title, string message)
+        {
+            var tcs = new TaskCompletionSource<bool>();
+            DispatcherQueue.TryEnqueue(async () =>
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = title,
+                    Content = message,
+                    PrimaryButtonText = "确认",
+                    CloseButtonText = "取消",
+                    XamlRoot = this.Content.XamlRoot
+                };
+                var result = await dialog.ShowAsync();
+                tcs.SetResult(result == ContentDialogResult.Primary);
+            });
+            return tcs.Task;
+        }
+
+        // ==================== 设置：外部大模型 ====================
+
+        private void LoadSettingsExternalLLMConfig()
+        {
+            SettingsExternalLLMUrl.Text = _config.ExternalLLMApiUrl;
+            SettingsExternalLLMKey.Text = _config.ExternalLLMApiKey;
+            PopulateSettingsModelCombo();
+        }
+
+        private void PopulateSettingsModelCombo()
+        {
+            SettingsExternalLLMModels.Items.Clear();
+            var models = _config.ExternalLLMAvailableModels;
+            foreach (var m in models)
+                SettingsExternalLLMModels.Items.Add(new ComboBoxItem { Content = m, Tag = m });
+            if (models.Count > 0)
+                SettingsExternalLLMModels.PlaceholderText = $"共 {models.Count} 个模型";
+            else
+                SettingsExternalLLMModels.PlaceholderText = "请先获取模型列表...";
+        }
+
+        private void OnSettingsExternalLLMChanged(object sender, object e)
+        {
+            _config.ExternalLLMApiUrl = SettingsExternalLLMUrl?.Text?.Trim() ?? "";
+            _config.ExternalLLMApiKey = SettingsExternalLLMKey?.Text?.Trim() ?? "";
+            ConfigManager.Save(_config);
+        }
+
+        private async void OnFetchExternalModels(object sender, RoutedEventArgs e)
+        {
+            string url = SettingsExternalLLMUrl.Text.Trim();
+            string key = SettingsExternalLLMKey.Text.Trim();
+            if (string.IsNullOrEmpty(url))
+            {
+                SettingsExternalLLMStatus.Text = "请先输入 API 地址";
+                return;
+            }
+            url = url.TrimEnd('/');
+            string modelsUrl = url + "/models";
+            SettingsExternalLLMStatus.Text = "正在获取模型列表...";
+
+            try
+            {
+                using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+                var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, modelsUrl);
+                if (!string.IsNullOrEmpty(key))
+                    req.Headers.Add("Authorization", $"Bearer {key}");
+                var resp = await http.SendAsync(req);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    SettingsExternalLLMStatus.Text = $"请求失败: HTTP {(int)resp.StatusCode}";
+                    return;
+                }
+                var body = await resp.Content.ReadAsStringAsync();
+                var doc = System.Text.Json.JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                var dataArray = root.TryGetProperty("data", out var d) ? d : root;
+                var modelList = new List<string>();
+                if (dataArray.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var item in dataArray.EnumerateArray())
+                    {
+                        var id = item.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+                        if (!string.IsNullOrEmpty(id)) modelList.Add(id);
+                    }
+                }
+                modelList.Sort();
+                _config.ExternalLLMAvailableModels = modelList;
+                ConfigManager.Save(_config);
+                PopulateSettingsModelCombo();
+                PopulateCustomModelCombo();
+                SettingsExternalLLMStatus.Text = $"获取成功，共 {modelList.Count} 个模型";
+            }
+            catch (Exception ex)
+            {
+                SettingsExternalLLMStatus.Text = $"获取失败: {ex.Message}";
+            }
+        }
+
+        private async void OnCheckExternalModelHealth(object sender, RoutedEventArgs e)
+        {
+            string url = SettingsExternalLLMUrl.Text.Trim();
+            string key = SettingsExternalLLMKey.Text.Trim();
+            if (string.IsNullOrEmpty(url))
+            {
+                SettingsExternalLLMStatus.Text = "请先输入 API 地址";
+                return;
+            }
+            url = url.TrimEnd('/');
+            string chatUrl = url + "/chat/completions";
+            SettingsExternalLLMStatus.Text = "正在检测...";
+
+            try
+            {
+                using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+                var payload = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    model = "gpt-3.5-turbo",
+                    messages = new[] { new { role = "user", content = "hi" } },
+                    max_tokens = 1
+                });
+                var content = new System.Net.Http.StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+                var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, chatUrl) { Content = content };
+                if (!string.IsNullOrEmpty(key))
+                    req.Headers.Add("Authorization", $"Bearer {key}");
+                var resp = await http.SendAsync(req);
+                if (resp.IsSuccessStatusCode)
+                    SettingsExternalLLMStatus.Text = "检测通过，接口可用";
+                else
+                    SettingsExternalLLMStatus.Text = $"检测失败: HTTP {(int)resp.StatusCode}";
+            }
+            catch (Exception ex)
+            {
+                SettingsExternalLLMStatus.Text = $"检测失败: {ex.Message}";
+            }
+        }
+
+        private void OnClearExternalModelCache(object sender, RoutedEventArgs e)
+        {
+            _config.ExternalLLMAvailableModels.Clear();
+            ConfigManager.Save(_config);
+            SettingsExternalLLMModels.Items.Clear();
+            SettingsExternalLLMModels.PlaceholderText = "请先获取模型列表...";
+            SettingsExternalLLMStatus.Text = "缓存已清空";
+            if (DreamFactoryCustomModel != null) { DreamFactoryCustomModel.Items.Clear(); DreamFactoryCustomModel.PlaceholderText = "请先在设置中获取模型列表..."; }
         }
     }
 }
