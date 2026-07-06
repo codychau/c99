@@ -31,6 +31,7 @@ namespace C99.Services
         private bool _isRunning;
         private readonly List<ReportHistoryItem> _reportHistory = new();
         private static readonly TimeSpan HistoryMaxAge = TimeSpan.FromDays(1);
+        private readonly string _base64Encoding;
 
         /// <summary>收到新报告时触发</summary>
         public event Action<string, string>? OnReportGenerated;
@@ -47,6 +48,7 @@ namespace C99.Services
         public AIDreamFactoryService(DreamFactoryConfig config)
         {
             _config = config;
+            _base64Encoding = config.Base64Encoding;
             _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
         }
 
@@ -347,7 +349,7 @@ namespace C99.Services
                 && (report.Important == null || report.Important.Length == 0)
                 && string.IsNullOrEmpty(report.Others))
             {
-                string emails = report.Emails;
+                string emails = DecodeBase64Content(report.Emails);
                 if (emails.Length > 32000)
                     emails = emails[..32000] + "\n...(已截断)";
                 return "## 邮件列表\n\n" + emails;
@@ -369,6 +371,41 @@ namespace C99.Services
                 if (others.Length > 24000)
                     others = others[..24000] + "\n...(已截断)";
                 sb.AppendLine(others);
+            }
+
+            return sb.ToString();
+        }
+
+        private string DecodeBase64Content(string rawText)
+        {
+            var sb = new StringBuilder();
+            var lines = rawText.Split('\n');
+            var b64Buffer = new List<string>();
+            string? lastNonB64 = null;
+
+            void Flush()
+            {
+                if (b64Buffer.Count == 0) return;
+                var joined = string.Join("", b64Buffer.Select(l => l.Trim()));
+                b64Buffer.Clear();
+                var decoded = TryDecodeBase64(joined, lastNonB64);
+                sb.AppendLine(decoded ?? joined);
+                lastNonB64 = null;
+            }
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                var trimmed = lines[i].Trim();
+                if (trimmed.Length == 0) { Flush(); continue; }
+                if (IsBase64Line(trimmed))
+                    b64Buffer.Add(trimmed);
+                else
+                {
+                    Flush();
+                    sb.AppendLine(TryFixGarbledText(lines[i]) ?? lines[i]);
+                    lastNonB64 = trimmed;
+                }
+                if (i == lines.Length - 1) Flush();
             }
 
             return sb.ToString();
@@ -414,20 +451,22 @@ namespace C99.Services
             return string.IsNullOrEmpty(responseText) ? "(AI 返回空内容)" : responseText;
         }
 
-        private static void AppendFallbackSection(StringBuilder sb, string title, string? content)
+        private void AppendFallbackSection(StringBuilder sb, string title, string? content)
         {
             if (string.IsNullOrWhiteSpace(content)) return;
             sb.AppendLine($"## {title}");
 
             var lines = content.Split('\n');
             var b64Buffer = new List<string>();
+            string? lastNonB64 = null;
 
             void FlushBase64()
             {
                 if (b64Buffer.Count == 0) return;
                 var joined = string.Join("", b64Buffer.Select(l => l.Trim()));
                 b64Buffer.Clear();
-                var decoded = TryDecodeBase64(joined);
+                var decoded = TryDecodeBase64(joined, lastNonB64);
+                lastNonB64 = null;
                 if (decoded != null)
                 {
                     if (decoded.Length > 500) decoded = decoded[..500] + "...";
@@ -451,8 +490,15 @@ namespace C99.Services
                 else
                 {
                     FlushBase64();
-                    if (trimmed.Length > 200) trimmed = trimmed[..200] + "...";
-                    sb.AppendLine(trimmed);
+                    var fixedText = TryFixGarbledText(lines[i]);
+                    if (fixedText != null)
+                        sb.AppendLine(fixedText);
+                    else
+                    {
+                        if (trimmed.Length > 200) trimmed = trimmed[..200] + "...";
+                        sb.AppendLine(trimmed);
+                    }
+                    lastNonB64 = trimmed;
                 }
 
                 if (i == lines.Length - 1) FlushBase64();
@@ -476,7 +522,7 @@ namespace C99.Services
             return total >= 30 && valid * 100 / total >= 90;
         }
 
-        private static string? TryDecodeBase64(string base64Text)
+        private string? TryDecodeBase64(string base64Text, string? hintLine = null)
         {
             try
             {
@@ -484,17 +530,149 @@ namespace C99.Services
                 if (cleaned.Length % 4 != 0)
                     cleaned = cleaned.PadRight(cleaned.Length + (4 - cleaned.Length % 4) % 4, '=');
                 var bytes = Convert.FromBase64String(cleaned);
-                var decoded = Encoding.UTF8.GetString(bytes);
-                if (decoded.Any(c => c >= 0x4E00 && c <= 0x9FFF))
-                    return decoded;
-                if (decoded.All(c => c >= 0x20 && c <= 0x7E || c == '\r' || c == '\n' || c == '\t'))
-                    return decoded;
+
+                var hintCharset = ExtractCharsetFromText(hintLine);
+                if (!string.IsNullOrEmpty(hintCharset))
+                {
+                    var hintEnc = ResolveEncoding(hintCharset);
+                    if (hintEnc != null)
+                    {
+                        try
+                        {
+                            var result = hintEnc.GetString(bytes);
+                            if (ScoreContent(result) > 0.3) return result;
+                        }
+                        catch { }
+                    }
+                }
+
+                // 如果用户指定了编码（非 auto），直接用
+                if (!string.Equals(_base64Encoding, "auto", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        var enc = ResolveEncoding(_base64Encoding);
+                        if (enc != null)
+                        {
+                            var result = enc.GetString(bytes);
+                            if (ScoreContent(result) > 0.3) return result;
+                        }
+                    }
+                    catch { }
+                }
+
+                // 自动检测：charset 头 → UTF-8 → GBK
+                var detectCharset = TryDetectCharset(bytes);
+                var encodings = new List<System.Text.Encoding>();
+                if (!string.IsNullOrEmpty(detectCharset))
+                {
+                    var detectedEnc = ResolveEncoding(detectCharset);
+                    if (detectedEnc != null) encodings.Add(detectedEnc);
+                }
+                encodings.Add(System.Text.Encoding.UTF8);
+                var gbkEnc = ResolveEncoding("gbk");
+                if (gbkEnc != null) encodings.Add(gbkEnc);
+
+                string? best = null;
+                double bestScore = 0;
+                foreach (var enc in encodings)
+                {
+                    try
+                    {
+                        var decoded = enc.GetString(bytes);
+                        var score = ScoreContent(decoded);
+                        if (score > bestScore) { bestScore = score; best = decoded; }
+                    }
+                    catch { }
+                }
+
+                if (best != null && bestScore > 0.3) return best;
                 return null;
             }
             catch
             {
                 return null;
             }
+        }
+
+        private static double ScoreContent(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            int readable = 0;
+            foreach (char c in text)
+            {
+                if ((c >= 0x4E00 && c <= 0x9FFF)
+                    || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9')
+                    || char.IsWhiteSpace(c) || char.IsPunctuation(c))
+                    readable++;
+            }
+            return (double)readable / text.Length;
+        }
+
+        private static string? TryDetectCharset(byte[] bytes)
+        {
+            try
+            {
+                var ascii = System.Text.Encoding.ASCII.GetString(bytes);
+                var m = System.Text.RegularExpressions.Regex.Match(ascii,
+                    @"charset\s*=\s*[""']?([\w-]+)",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (m.Success)
+                {
+                    if (ResolveEncoding(m.Groups[1].Value) != null) return m.Groups[1].Value;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static string? ExtractCharsetFromText(string? text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            var m = System.Text.RegularExpressions.Regex.Match(text,
+                @"charset\s*=\s*[""']?([\w-]+)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            return m.Success ? m.Groups[1].Value : null;
+        }
+
+        private static string? TryFixGarbledText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            int garbled = 0, latin1 = 0;
+            foreach (char c in text)
+            {
+                if (c == 0xFFFD) garbled++;
+                else if (c >= 0x80 && c <= 0xFF) latin1++;
+            }
+            if (garbled + latin1 == 0) return null;
+
+            var charsetName = ExtractCharsetFromText(text);
+            if (charsetName == null) return null;
+
+            try
+            {
+                var enc = ResolveEncoding(charsetName);
+                if (enc == null) return null;
+                var bytes = new byte[text.Length];
+                for (int i = 0; i < text.Length; i++)
+                    bytes[i] = text[i] <= 0xFF ? (byte)text[i] : (byte)0x3F;
+                var decoded = enc.GetString(bytes);
+                if (ScoreContent(decoded) > 0.5) return decoded;
+            }
+            catch { }
+            return null;
+        }
+
+        private static System.Text.Encoding? ResolveEncoding(string name)
+        {
+            try { return System.Text.Encoding.GetEncoding(name); } catch { }
+            if (name.Equals("gb2312", StringComparison.OrdinalIgnoreCase))
+            {
+                try { return System.Text.Encoding.GetEncoding(936); } catch { }
+                try { return System.Text.Encoding.GetEncoding("gbk"); } catch { }
+            }
+            return null;
         }
 
         private async Task WriteJsonAsync(HttpListenerResponse response, object data, int statusCode = 200)
@@ -548,6 +726,7 @@ namespace C99.Services
 
         private async Task HandleReportPageAsync(HttpListenerRequest request, HttpListenerResponse response)
         {
+            response.Headers.Add("Cache-Control", "no-cache, no-store, must-revalidate");
             string? indexParam = request.QueryString["i"];
             int startIdx = int.TryParse(indexParam, out var i) && i >= 0 ? i : 0;
 

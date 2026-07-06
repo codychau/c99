@@ -1618,6 +1618,13 @@ namespace C99
             PopulateCustomModelCombo();
 
             DreamFactoryPrompt.Text = _dreamConfig.SystemPrompt;
+
+            foreach (ComboBoxItem item in DreamFactoryEncoding.Items)
+            {
+                if (item.Tag?.ToString() == _dreamConfig.Base64Encoding)
+                { DreamFactoryEncoding.SelectedItem = item; break; }
+            }
+
             UpdateDreamFactoryStatusUI();
         }
 
@@ -1666,6 +1673,9 @@ namespace C99
             if (DreamFactoryCustomModel?.SelectedItem is ComboBoxItem customItem)
                 _dreamConfig.CustomModelName = customItem.Tag?.ToString() ?? customItem.Content?.ToString() ?? "";
             _dreamConfig.SystemPrompt = DreamFactoryPrompt?.Text ?? "";
+
+            if (DreamFactoryEncoding?.SelectedItem is ComboBoxItem encItem)
+                _dreamConfig.Base64Encoding = encItem.Tag?.ToString() ?? "auto";
         }
 
         private void UpdateDreamFactoryStatusUI()

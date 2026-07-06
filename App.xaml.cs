@@ -11,6 +11,7 @@ namespace C99
 
         public App()
         {
+            System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
             InitializeComponent();
         }
 

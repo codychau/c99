@@ -85,6 +85,9 @@ namespace C99.Models
             if (ModelSource == "BuiltIn") return ""; // 本地模型不需要 key
             return CustomApiKey;
         }
+
+        /// <summary>base64 解码编码格式（auto / utf-8 / gb2312 / gbk / big5）</summary>
+        public string Base64Encoding { get; set; } = "auto";
     }
 
     /// <summary>

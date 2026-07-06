@@ -169,6 +169,24 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- 信息接收设置 -->
+                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="信息接收设置" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="编码格式：" VerticalAlignment="Center" FontSize="13"/>
+                                <ComboBox x:Name="DreamFactoryEncoding" Width="140" Height="32" Margin="8,0,0,0"
+                                          SelectionChanged="OnDreamFactoryConfigChanged">
+                                    <ComboBoxItem Content="自动检测" Tag="auto"/>
+                                    <ComboBoxItem Content="UTF-8" Tag="utf-8"/>
+                                    <ComboBoxItem Content="GB2312" Tag="gb2312"/>
+                                    <ComboBoxItem Content="GBK" Tag="gbk"/>
+                                    <ComboBoxItem Content="Big5" Tag="big5"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
                     <!-- System Prompt -->
                     <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
                         <StackPanel>
