@@ -22,6 +22,8 @@ namespace C99.Services
         private readonly DreamFactoryConfig _config;
         private readonly HttpClient _httpClient;
         private bool _isRunning;
+        private string _latestReport = "";
+        private string _latestAccount = "";
 
         /// <summary>收到新报告时触发</summary>
         public event Action<string, string>? OnReportGenerated;
@@ -129,6 +131,9 @@ namespace C99.Services
                         else
                             await WriteJsonAsync(response, new { error = "Method not allowed" }, 405);
                         break;
+                    case "/report/latest":
+                        await HandleReportPageAsync(request, response);
+                        break;
                     default:
                         response.StatusCode = 404;
                         await WriteJsonAsync(response, new { error = "Not found" });
@@ -223,8 +228,26 @@ namespace C99.Services
             }
 
             string finalSummary = context.TryGetValue("ai_response", out var modSummary) ? modSummary : summary;
+            string account = report.Account ?? "";
 
-            OnReportGenerated?.Invoke(finalSummary, report.Account ?? "");
+            _latestReport = finalSummary;
+            _latestAccount = account;
+
+            OnReportGenerated?.Invoke(finalSummary, account);
+
+            // 执行输出动作
+            var postAction = pipelineConfig?.PostAction;
+            if (postAction != null && postAction.ActionType != "none")
+            {
+                try
+                {
+                    await ExecutePostActionAsync(postAction, finalSummary, account);
+                }
+                catch (Exception ex)
+                {
+                    Log($"[输出动作] 执行失败: {ex.Message}");
+                }
+            }
 
             await WriteJsonAsync(response, new AIReportResponse { Summary = finalSummary });
         }
@@ -343,6 +366,211 @@ namespace C99.Services
         {
             OnLog?.Invoke(msg);
             System.Diagnostics.Debug.WriteLine($"[AI梦工厂] {msg}");
+        }
+
+        private async Task ExecutePostActionAsync(PostActionConfig action, string summary, string account)
+        {
+            Log($"[输出动作] 类型: {action.ActionType}");
+
+            switch (action.ActionType)
+            {
+                case "web_report":
+                    Log($"[输出动作] 报告已就绪: http://localhost:{_config.Port}/report/latest");
+                    break;
+
+                case "markdown":
+                    await SaveMarkdownAsync(action, summary);
+                    break;
+
+                case "word":
+                    await SaveWordAsync(action, summary);
+                    break;
+
+                case "excel":
+                    await SaveExcelAsync(action, summary);
+                    break;
+
+                case "siyuan":
+                    await UploadToSiyuanAsync(action, summary);
+                    break;
+            }
+        }
+
+        private async Task HandleReportPageAsync(HttpListenerRequest request, HttpListenerResponse response)
+        {
+            string summary = _latestReport;
+            string html = $@"<!DOCTYPE html>
+<html lang=""zh-CN"">
+<head>
+<meta charset=""utf-8"">
+<meta name=""viewport"" content=""width=device-width,initial-scale=1"">
+<title>工作报告 - {_latestAccount}</title>
+<style>
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.7;color:#333;background:#fafafa}}
+h1{{font-size:24px;border-bottom:2px solid #5B9BD5;padding-bottom:8px}}
+pre{{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;white-space:pre-wrap;font-size:14px;line-height:1.6}}
+.time{{color:#999;font-size:13px;margin-bottom:20px}}
+</style>
+</head>
+<body>
+<h1>工作报告</h1>
+<div class=""time"">账号: {System.Net.WebUtility.HtmlEncode(_latestAccount)} | {DateTime.Now:yyyy-MM-dd HH:mm:ss}</div>
+<pre>{System.Net.WebUtility.HtmlEncode(summary)}</pre>
+</body>
+</html>";
+
+            byte[] buffer = Encoding.UTF8.GetBytes(html);
+            response.ContentType = "text/html; charset=utf-8";
+            response.ContentLength64 = buffer.Length;
+            await response.OutputStream.WriteAsync(buffer);
+            response.Close();
+        }
+
+        private async Task SaveMarkdownAsync(PostActionConfig action, string summary)
+        {
+            string dir = action.OutputDir;
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+            {
+                Log("[输出动作] 输出目录无效，跳过 Markdown 保存");
+                return;
+            }
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string path = Path.Combine(dir, $"report_{timestamp}.md");
+            await Task.Run(() => File.WriteAllText(path, summary, Encoding.UTF8));
+            Log($"[输出动作] Markdown 已保存: {path}");
+        }
+
+        private async Task SaveWordAsync(PostActionConfig action, string summary)
+        {
+            string dir = action.OutputDir;
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+            {
+                Log("[输出动作] 输出目录无效，跳过 Word 保存");
+                return;
+            }
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string path = Path.Combine(dir, $"report_{timestamp}.docx");
+
+            await Task.Run(() =>
+            {
+                using var doc = DocumentFormat.OpenXml.Packaging.WordprocessingDocument.Create(path,
+                    DocumentFormat.OpenXml.WordprocessingDocumentType.Document);
+                var mainPart = doc.AddMainDocumentPart();
+                mainPart.Document = new DocumentFormat.OpenXml.Wordprocessing.Document();
+                var body = new DocumentFormat.OpenXml.Wordprocessing.Body();
+
+                // Title
+                var title = new DocumentFormat.OpenXml.Wordprocessing.Paragraph();
+                var titleRun = new DocumentFormat.OpenXml.Wordprocessing.Run();
+                var titleText = new DocumentFormat.OpenXml.Wordprocessing.Text("工作报告");
+                var titleProps = new DocumentFormat.OpenXml.Wordprocessing.RunProperties();
+                titleProps.Append(new DocumentFormat.OpenXml.Wordprocessing.Bold());
+                titleProps.Append(new DocumentFormat.OpenXml.Wordprocessing.FontSize { Val = "32" });
+                titleRun.Append(titleProps);
+                titleRun.Append(titleText);
+                title.Append(titleRun);
+                body.Append(title);
+
+                // Content
+                foreach (var line in summary.Split('\n'))
+                {
+                    var p = new DocumentFormat.OpenXml.Wordprocessing.Paragraph();
+                    var r = new DocumentFormat.OpenXml.Wordprocessing.Run();
+                    var t = new DocumentFormat.OpenXml.Wordprocessing.Text(line) { Space =
+                        DocumentFormat.OpenXml.SpaceProcessingModeValues.Preserve };
+                    r.Append(t);
+                    p.Append(r);
+                    body.Append(p);
+                }
+
+                mainPart.Document.Append(body);
+                mainPart.Document.Save();
+            });
+
+            Log($"[输出动作] Word 已保存: {path}");
+        }
+
+        private async Task SaveExcelAsync(PostActionConfig action, string summary)
+        {
+            string dir = action.OutputDir;
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+            {
+                Log("[输出动作] 输出目录无效，跳过 Excel 保存");
+                return;
+            }
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string path = Path.Combine(dir, $"report_{timestamp}.xlsx");
+
+            await Task.Run(() =>
+            {
+                using var wb = new ClosedXML.Excel.XLWorkbook();
+                var ws = wb.Worksheets.Add("工作报告");
+                ws.Cell("A1").Value = "工作报告";
+                ws.Cell("A1").Style.Font.Bold = true;
+                ws.Cell("A1").Style.Font.FontSize = 16;
+
+                var lines = summary.Split('\n');
+                for (int i = 0; i < lines.Length; i++)
+                    ws.Cell(i + 3, 1).Value = lines[i];
+
+                ws.Column(1).Width = 80;
+                ws.Column(1).Style.Alignment.WrapText = true;
+                wb.SaveAs(path);
+            });
+
+            Log($"[输出动作] Excel 已保存: {path}");
+        }
+
+        private async Task UploadToSiyuanAsync(PostActionConfig action, string summary)
+        {
+            string apiUrl = action.SiyuanApiUrl.TrimEnd('/');
+            string apiKey = action.SiyuanApiKey;
+            string notebookId = action.SiyuanNotebookId;
+
+            if (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(notebookId))
+            {
+                Log("[输出动作] 思源笔记配置不完整，跳过上传");
+                return;
+            }
+
+            string title = $"工作报告 {DateTime.Now:yyyy-MM-dd HH:mm}";
+            var payload = new
+            {
+                notebook = notebookId,
+                title,
+                markdown = summary
+            };
+            var json = JsonSerializer.Serialize(payload);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            var req = new HttpRequestMessage(HttpMethod.Post, $"{apiUrl}/api/notebook/createDocWithMd")
+            {
+                Content = content
+            };
+            req.Headers.Add("Authorization", $"Token {apiKey}");
+
+            try
+            {
+                var resp = await _httpClient.SendAsync(req);
+                if (resp.IsSuccessStatusCode)
+                    Log($"[输出动作] 已上传到思源笔记");
+                else
+                    Log($"[输出动作] 思源笔记上传失败: HTTP {(int)resp.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                Log($"[输出动作] 思源笔记上传异常: {ex.Message}");
+            }
+        }
+
+        private async Task WriteHtmlAsync(HttpListenerResponse response, string html, int statusCode = 200)
+        {
+            response.StatusCode = statusCode;
+            response.ContentType = "text/html; charset=utf-8";
+            var buffer = Encoding.UTF8.GetBytes(html);
+            response.ContentLength64 = buffer.Length;
+            await response.OutputStream.WriteAsync(buffer);
+            response.Close();
         }
 
         public void Dispose()

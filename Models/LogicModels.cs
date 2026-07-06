@@ -25,6 +25,16 @@ namespace C99.Models
     {
         public LogicPipeline? PreAILogic { get; set; }
         public LogicPipeline? PostAILogic { get; set; }
+        public PostActionConfig PostAction { get; set; } = new();
+    }
+
+    public class PostActionConfig
+    {
+        public string ActionType { get; set; } = "none";
+        public string OutputDir { get; set; } = "";
+        public string SiyuanApiUrl { get; set; } = "http://localhost:6806";
+        public string SiyuanApiKey { get; set; } = "";
+        public string SiyuanNotebookId { get; set; } = "";
     }
 
     public class LogicEngine

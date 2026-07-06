@@ -1681,7 +1681,7 @@ namespace C99
             // 同步外部大模型配置（从设置 → 梦工厂）
             if (_dreamConfig.ModelSource == "Custom")
             {
-                _dreamConfig.CustomApiUrl = _config.ExternalLLMApiUrl;
+                _dreamConfig.CustomApiUrl = _config.ExternalLLMApiUrl.TrimEnd('/') + "/chat/completions";
                 _dreamConfig.CustomApiKey = _config.ExternalLLMApiKey;
             }
             _dreamFactoryService?.Dispose();
@@ -1832,6 +1832,22 @@ namespace C99
                 var win = new LogicDesignerWindow(plc.PostAILogic, $"{_dreamConfig.CurrentWorkflow} - 后置逻辑(Post-AI)", pipeline =>
                 {
                     plc.PostAILogic = pipeline;
+                    SaveDreamFactoryConfig();
+                });
+                win.Activate();
+            }
+        }
+
+        private void OnDesignPostAction(object sender, RoutedEventArgs e)
+        {
+            UpdateDreamConfigFromUI();
+            EnsureLogicPipelineExists();
+            if (_dreamConfig.LogicPipelines.TryGetValue(_dreamConfig.CurrentWorkflow, out var plc))
+            {
+                plc.PostAction ??= new PostActionConfig();
+                var win = new PostActionSettingsWindow(plc.PostAction, _dreamConfig.CurrentWorkflow, action =>
+                {
+                    plc.PostAction = action;
                     SaveDreamFactoryConfig();
                 });
                 win.Activate();
