@@ -237,15 +237,21 @@ namespace C99.Services
             catch (Exception ex)
             {
                 Log($"AI 调用失败: {ex.Message}");
-                var fallbackLines = new System.Text.StringBuilder();
-                if (report.Important != null)
+                var fallbackLines = new StringBuilder();
+
+                if (report.Important != null && report.Important.Length > 0)
                 {
-                    foreach (var m in report.Important)
-                        fallbackLines.AppendLine($"- [{m.From}] {m.Subject}");
+                    var impText = string.Join("\n", report.Important.Select(m =>
+                        $"{(string.IsNullOrEmpty(m.Time) ? "" : $"({m.Time}) ")}[{m.From}] {m.Subject}\n  {m.Preview}"));
+                    AppendFallbackSection(fallbackLines, "重要联系人邮件", impText);
                 }
-                if (!string.IsNullOrEmpty(report.Others))
-                    fallbackLines.Append(report.Others.AsSpan(0, Math.Min(500, report.Others.Length)).ToString());
-                summary = $"AI 调用失败: {ex.Message}\n\n以下是原始邮件摘要:\n\n" + fallbackLines;
+                AppendFallbackSection(fallbackLines, "其他邮件摘要", report.Others);
+                AppendFallbackSection(fallbackLines, "邮件列表", report.Emails);
+
+                var result = fallbackLines.ToString();
+                if (result.Length > 3000)
+                    result = result[..3000] + "\n...(已截断)";
+                summary = $"AI 调用失败: {ex.Message}\n\n以下是原始邮件摘要:\n\n" + result;
             }
 
             context["ai_response"] = summary;
@@ -404,8 +410,22 @@ namespace C99.Services
             var responseBody = await httpResponse.Content.ReadAsStringAsync();
             var chatResponse = JsonSerializer.Deserialize<OpenAIChatResponse>(responseBody);
 
-            return chatResponse?.Choices?.FirstOrDefault()?.Message?.Content?.Trim()
-                ?? "(AI 返回空内容)";
+            var responseText = chatResponse?.Choices?.FirstOrDefault()?.Message?.Content?.Trim();
+            return string.IsNullOrEmpty(responseText) ? "(AI 返回空内容)" : responseText;
+        }
+
+        private static void AppendFallbackSection(StringBuilder sb, string title, string? content)
+        {
+            if (string.IsNullOrWhiteSpace(content)) return;
+            sb.AppendLine($"## {title}");
+            foreach (var line in content.Split('\n'))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length == 0) continue;
+                if (trimmed.Length > 200) trimmed = trimmed[..200] + "...";
+                sb.AppendLine(trimmed);
+            }
+            sb.AppendLine();
         }
 
         private async Task WriteJsonAsync(HttpListenerResponse response, object data, int statusCode = 200)

@@ -15,6 +15,7 @@ using Windows.Storage.Pickers;
 using WinRT.Interop;
 using C99.Services;
 using C99.Models;
+using C99.Helpers;
 using Windows.UI.Notifications;
 
 namespace C99
@@ -75,6 +76,7 @@ namespace C99
                 SaveAllParams();
                 SaveDreamFactoryConfig();
                 _dreamFactoryService?.Dispose();
+                _trayHelper?.Dispose();
             };
 
             // 初始化 AI梦工厂
@@ -1524,6 +1526,7 @@ namespace C99
         // ==================== AI梦工厂 ====================
 
         private AIDreamFactoryService? _dreamFactoryService;
+        private TrayIconHelper? _trayHelper;
         private DreamFactoryConfig _dreamConfig = new();
         private DispatcherTimer? _notificationTimer;
         private DispatcherTimer? _genericNotificationTimer;
@@ -1702,6 +1705,40 @@ namespace C99
             { _dreamFactoryService.Stop(); UpdateDreamFactoryStatusUI(); }
             else { StartDreamFactoryService(); }
         }
+
+        private void OnMinimizeToTrayClick(object sender, RoutedEventArgs e)
+        {
+            _trayHelper?.Dispose();
+            _trayHelper = new TrayIconHelper();
+            _trayHelper.OnDoubleClick += RestoreFromTray;
+            _trayHelper.OnShowRequest += RestoreFromTray;
+            _trayHelper.OnExitRequest += OnTrayExit;
+            _trayHelper.Show("C99 - AI梦工厂");
+            var hwnd = WindowNative.GetWindowHandle(this);
+            ShowWindow(hwnd, 0);
+        }
+
+        public void RestoreFromTray()
+        {
+            var hwnd = WindowNative.GetWindowHandle(this);
+            ShowWindow(hwnd, 5);
+            SetForegroundWindow(hwnd);
+            _trayHelper?.Dispose();
+            _trayHelper = null;
+        }
+
+        private void OnTrayExit()
+        {
+            _trayHelper?.Dispose();
+            _trayHelper = null;
+            this.Close();
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
 
         private void OnDreamFactoryModelSourceChanged(object sender, SelectionChangedEventArgs e)
         {
