@@ -15,6 +15,7 @@ using Windows.Storage.Pickers;
 using WinRT.Interop;
 using C99.Services;
 using C99.Models;
+using Windows.UI.Notifications;
 
 namespace C99
 {
@@ -1688,6 +1689,7 @@ namespace C99
             _dreamFactoryService = new AIDreamFactoryService(_dreamConfig);
             _dreamFactoryService.OnLog += OnDreamFactoryLog;
             _dreamFactoryService.OnReportGenerated += OnDreamFactoryReport;
+            _dreamFactoryService.OnWebReportReady += ShowWebReportToast;
             _dreamFactoryService.OnPopupNotifyAsync += OnGenericPopupNotifyAsync;
             _dreamFactoryService.OnPopupConfirmAsync += OnGenericPopupConfirmAsync;
             _dreamFactoryService.Start();
@@ -1804,6 +1806,29 @@ namespace C99
         {
             _genericNotificationTimer?.Stop();
             GenericNotification.Visibility = Visibility.Collapsed;
+        }
+
+        private void ShowWebReportToast(string url, string account)
+        {
+            try
+            {
+                var template = ToastNotificationManager.GetTemplateContent(ToastTemplateType.ToastText02);
+                var textNodes = template.GetElementsByTagName("text");
+                textNodes[0].AppendChild(template.CreateTextNode("工作报告已生成"));
+                textNodes[1].AppendChild(template.CreateTextNode(
+                    string.IsNullOrEmpty(account) ? "点击打开查看" : $"账号: {account}"));
+
+                var toastElement = (Windows.Data.Xml.Dom.XmlElement)template.SelectSingleNode("/toast")!;
+                toastElement.SetAttribute("launch", url);
+                toastElement.SetAttribute("activationType", "protocol");
+
+                var toast = new ToastNotification(template);
+                ToastNotificationManager.CreateToastNotifier("C99").Show(toast);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Toast] 通知失败: {ex.Message}");
+            }
         }
 
         private void OnDesignPreAILogic(object sender, RoutedEventArgs e)

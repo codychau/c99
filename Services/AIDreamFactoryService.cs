@@ -28,6 +28,9 @@ namespace C99.Services
         /// <summary>收到新报告时触发</summary>
         public event Action<string, string>? OnReportGenerated;
 
+        /// <summary>网页报告就绪时触发 (url, account)</summary>
+        public event Action<string, string>? OnWebReportReady;
+
         public event Action<string>? OnLog;
         public event Func<string, string, int, Task>? OnPopupNotifyAsync;
         public event Func<string, string, Task<bool>>? OnPopupConfirmAsync;
@@ -375,8 +378,12 @@ namespace C99.Services
             switch (action.ActionType)
             {
                 case "web_report":
-                    Log($"[输出动作] 报告已就绪: http://localhost:{_config.Port}/report/latest");
+                {
+                    string url = $"http://localhost:{_config.Port}/report/latest";
+                    Log($"[输出动作] 报告已就绪: {url}");
+                    OnWebReportReady?.Invoke(url, account);
                     break;
+                }
 
                 case "markdown":
                     await SaveMarkdownAsync(action, summary);
