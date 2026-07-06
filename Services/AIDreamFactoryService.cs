@@ -405,7 +405,7 @@ namespace C99.Services
 
         private async Task HandleReportPageAsync(HttpListenerRequest request, HttpListenerResponse response)
         {
-            string summary = _latestReport;
+            string summaryHtml = Markdig.Markdown.ToHtml(_latestReport);
             string html = $@"<!DOCTYPE html>
 <html lang=""zh-CN"">
 <head>
@@ -414,15 +414,24 @@ namespace C99.Services
 <title>工作报告 - {_latestAccount}</title>
 <style>
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.7;color:#333;background:#fafafa}}
-h1{{font-size:24px;border-bottom:2px solid #5B9BD5;padding-bottom:8px}}
-pre{{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;white-space:pre-wrap;font-size:14px;line-height:1.6}}
+h1{{font-size:24px;border-bottom:2px solid #5B9BD5;padding-bottom:8px;margin-top:24px}}
+h2{{font-size:18px;color:#3A7BC8;margin-top:20px;margin-bottom:8px}}
+h3{{font-size:15px;color:#555;margin-top:16px;margin-bottom:6px}}
+p{{margin:8px 0}}
+ul,ol{{padding-left:24px;margin:8px 0}}
+li{{margin:4px 0}}
+strong{{color:#222}}
+code{{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-family:Consolas,monospace;font-size:13px}}
+pre{{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;white-space:pre-wrap;font-size:13px;line-height:1.6;overflow-x:auto}}
+blockquote{{border-left:4px solid #5B9BD5;margin:12px 0;padding:4px 16px;color:#666;background:#f5f7fa}}
+hr{{border:none;border-top:1px solid #e0e0e0;margin:20px 0}}
 .time{{color:#999;font-size:13px;margin-bottom:20px}}
 </style>
 </head>
 <body>
 <h1>工作报告</h1>
 <div class=""time"">账号: {System.Net.WebUtility.HtmlEncode(_latestAccount)} | {DateTime.Now:yyyy-MM-dd HH:mm:ss}</div>
-<pre>{System.Net.WebUtility.HtmlEncode(summary)}</pre>
+<div>{summaryHtml}</div>
 </body>
 </html>";
 
