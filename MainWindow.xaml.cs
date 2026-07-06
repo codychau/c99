@@ -1526,6 +1526,7 @@ namespace C99
         private DreamFactoryConfig _dreamConfig = new();
         private DispatcherTimer? _notificationTimer;
         private DispatcherTimer? _genericNotificationTimer;
+        private bool _isLoadingDreamConfig;
 
         private void LoadDreamFactoryConfig()
         {
@@ -1542,11 +1543,14 @@ namespace C99
                 }
             }
             catch (Exception ex) { Debug.WriteLine($"加载AI梦工厂配置失败: {ex.Message}"); }
+            _isLoadingDreamConfig = true;
             ApplyDreamConfigToUI();
+            _isLoadingDreamConfig = false;
         }
 
         private void SaveDreamFactoryConfig()
         {
+            if (_isLoadingDreamConfig) return;
             try
             {
                 string configPath = System.IO.Path.Combine(
