@@ -459,29 +459,46 @@ namespace C99.Services
 <title>工作报告</title>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;height:100vh;color:#333;background:#fafafa}}
-.side{{width:240px;min-width:240px;background:#f0f2f5;border-right:1px solid #e0e0e0;display:flex;flex-direction:column}}
-.side h2{{font-size:15px;padding:16px;border-bottom:1px solid #e0e0e0;color:#555}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;display:flex;height:100vh;color:#2c3e50;background:#f5f7fa}}
+.side{{width:260px;min-width:260px;background:#1e293b;display:flex;flex-direction:column;box-shadow:2px 0 12px rgba(0,0,0,.08);z-index:1}}
+.side h2{{font-size:14px;font-weight:600;padding:20px 20px 16px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #334155}}
 .list{{flex:1;overflow-y:auto;padding:8px 0}}
-.item{{display:block;padding:12px 16px;cursor:pointer;border-left:3px solid transparent;text-decoration:none;transition:background .15s}}
-.item:hover{{background:#e8eaed}}
-.item.sel{{background:#dde8f6;border-left-color:#3A7BC8}}
-.item .ti{{font-size:13px;color:#555;font-weight:500}}
-.item .ac{{font-size:11px;color:#999;margin-top:2px}}
-.main{{flex:1;overflow-y:auto;padding:32px 40px;line-height:1.7}}
-.main h1{{font-size:24px;border-bottom:2px solid #5B9BD5;padding-bottom:8px;margin-bottom:8px}}
-.main h2{{font-size:18px;color:#3A7BC8;margin-top:20px;margin-bottom:8px}}
-.main h3{{font-size:15px;color:#555;margin-top:16px;margin-bottom:6px}}
-.main p{{margin:8px 0}}
-.main ul,.main ol{{padding-left:24px;margin:8px 0}}
-.main li{{margin:4px 0}}
-.main strong{{color:#222}}
-.main code{{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-family:Consolas,monospace;font-size:13px}}
-.main pre{{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;white-space:pre-wrap;font-size:13px;line-height:1.6;overflow-x:auto}}
-.main blockquote{{border-left:4px solid #5B9BD5;margin:12px 0;padding:4px 16px;color:#666;background:#f5f7fa}}
-.main hr{{border:none;border-top:1px solid #e0e0e0;margin:20px 0}}
-.time{{color:#999;font-size:13px;margin-bottom:20px}}
-.empty{{padding:40px;color:#999;text-align:center}}
+.list::-webkit-scrollbar{{width:4px}}
+.list::-webkit-scrollbar-track{{background:transparent}}
+.list::-webkit-scrollbar-thumb{{background:#475569;border-radius:2px}}
+.item{{display:block;padding:14px 20px;border-left:3px solid transparent;text-decoration:none;margin:1px 8px;border-radius:0 6px 6px 0;transition:all .2s ease}}
+.item:hover{{background:rgba(255,255,255,.06);border-left-color:#64748b}}
+.item.sel{{background:rgba(59,130,246,.15);border-left-color:#3b82f6}}
+.item .ti{{font-size:13px;color:#e2e8f0;font-weight:500;font-variant-numeric:tabular-nums}}
+.item .ac{{font-size:11px;color:#64748b;margin-top:3px}}
+.main{{flex:1;overflow-y:auto;display:flex;justify-content:center;padding:40px 48px}}
+.main::-webkit-scrollbar{{width:6px}}
+.main::-webkit-scrollbar-track{{background:transparent}}
+.main::-webkit-scrollbar-thumb{{background:#cbd5e1;border-radius:3px}}
+.main-inner{{max-width:780px;width:100%}}
+.main h1{{font-size:28px;font-weight:700;color:#1e293b;padding-bottom:12px;margin-bottom:12px;border-bottom:3px solid #3b82f6;letter-spacing:-0.5px}}
+.main h2{{font-size:19px;color:#2563eb;margin-top:28px;margin-bottom:10px;font-weight:600}}
+.main h3{{font-size:16px;color:#475569;margin-top:20px;margin-bottom:8px;font-weight:600}}
+.main p{{margin:10px 0;font-size:15px}}
+.main ul,.main ol{{padding-left:28px;margin:10px 0}}
+.main li{{margin:6px 0;font-size:15px}}
+.main li::marker{{color:#3b82f6}}
+.main strong{{color:#0f172a;font-weight:600}}
+.main em{{color:#334155}}
+.main code{{background:#f1f5f9;color:#e11d48;padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono','Cascadia Code',Consolas,monospace;font-size:13px;border:1px solid #e2e8f0}}
+.main pre{{background:#1e293b;color:#e2e8f0;border:none;border-radius:10px;padding:20px 24px;font-size:13px;line-height:1.7;overflow-x:auto;margin:16px 0;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
+.main pre code{{background:none;color:inherit;padding:0;border:none;font-size:inherit}}
+.main blockquote{{border-left:4px solid #3b82f6;margin:16px 0;padding:12px 20px;color:#475569;background:#f8fafc;border-radius:0 8px 8px 0;font-size:14px;box-shadow:0 1px 3px rgba(0,0,0,.04)}}
+.main hr{{border:none;border-top:2px solid #e2e8f0;margin:28px 0}}
+.main table{{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)}}
+.main th{{background:#f1f5f9;padding:10px 14px;text-align:left;font-weight:600;color:#475569;border-bottom:2px solid #e2e8f0}}
+.main td{{padding:10px 14px;border-bottom:1px solid #f1f5f9}}
+.main tr:last-child td{{border-bottom:none}}
+.main a{{color:#2563eb;text-decoration:none;border-bottom:1px solid transparent;transition:border-color .15s}}
+.main a:hover{{border-bottom-color:#2563eb}}
+.time{{color:#94a3b8;font-size:13px;margin-bottom:24px;display:flex;align-items:center;gap:6px}}
+.time::before{{content:'🕐';font-size:14px}}
+.empty{{padding:40px 0;color:#94a3b8;text-align:center;font-size:14px}}
 </style>
 </head>
 <body>
@@ -490,9 +507,11 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display
 <div class=""list"">" + sbSidebar.ToString() + @"</div>
 </div>
 <div class=""main"">
+<div class=""main-inner"">
 <h1>工作报告</h1>
 <div class=""time"">账号: " + System.Net.WebUtility.HtmlEncode(history[startIdx].Account) + @" | " + history[startIdx].Time.ToString("yyyy-MM-dd HH:mm:ss") + @"</div>
 <div>" + summaryHtml + @"</div>
+</div>
 </div>
 </body>
 </html>";
