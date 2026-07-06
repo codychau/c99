@@ -17,13 +17,20 @@ namespace C99.Services
     /// </summary>
     public class AIDreamFactoryService : IDisposable
     {
+        private class ReportHistoryItem
+        {
+            public DateTime Time { get; set; }
+            public string Account { get; set; } = "";
+            public string Summary { get; set; } = "";
+        }
+
         private HttpListener? _listener;
         private CancellationTokenSource? _cts;
         private readonly DreamFactoryConfig _config;
         private readonly HttpClient _httpClient;
         private bool _isRunning;
-        private string _latestReport = "";
-        private string _latestAccount = "";
+        private readonly List<ReportHistoryItem> _reportHistory = new();
+        private static readonly TimeSpan HistoryMaxAge = TimeSpan.FromDays(1);
 
         /// <summary>收到新报告时触发</summary>
         public event Action<string, string>? OnReportGenerated;
@@ -233,8 +240,16 @@ namespace C99.Services
             string finalSummary = context.TryGetValue("ai_response", out var modSummary) ? modSummary : summary;
             string account = report.Account ?? "";
 
-            _latestReport = finalSummary;
-            _latestAccount = account;
+            lock (_reportHistory)
+            {
+                _reportHistory.Insert(0, new ReportHistoryItem
+                {
+                    Time = DateTime.Now,
+                    Account = account,
+                    Summary = finalSummary
+                });
+                _reportHistory.RemoveAll(h => DateTime.Now - h.Time > HistoryMaxAge);
+            }
 
             OnReportGenerated?.Invoke(finalSummary, account);
 
@@ -405,33 +420,80 @@ namespace C99.Services
 
         private async Task HandleReportPageAsync(HttpListenerRequest request, HttpListenerResponse response)
         {
-            string summaryHtml = Markdig.Markdown.ToHtml(_latestReport);
-            string html = $@"<!DOCTYPE html>
+            string? indexParam = request.QueryString["i"];
+            int startIdx = int.TryParse(indexParam, out var i) && i >= 0 ? i : 0;
+
+            List<ReportHistoryItem> history;
+            lock (_reportHistory) { history = _reportHistory.ToList(); }
+
+            if (history.Count == 0)
+            {
+                await WriteHtmlAsync(response, "<!DOCTYPE html><html><head><meta charset=utf-8></head><body style='font-family:sans-serif;padding:40px;color:#888'>暂无报告</body></html>");
+                return;
+            }
+
+            if (startIdx >= history.Count) startIdx = 0;
+
+            string summaryHtml = Markdig.Markdown.ToHtml(history[startIdx].Summary);
+
+            var sbSidebar = new StringBuilder();
+            for (int j = 0; j < history.Count; j++)
+            {
+                string selClass = j == startIdx ? " sel" : "";
+                sbSidebar.Append("<a class='item");
+                sbSidebar.Append(selClass);
+                sbSidebar.Append("' href='?i=");
+                sbSidebar.Append(j);
+                sbSidebar.Append("'><div class='ti'>");
+                sbSidebar.Append(System.Net.WebUtility.HtmlEncode(history[j].Time.ToString("HH:mm:ss")));
+                sbSidebar.Append("</div><div class='ac'>账号: ");
+                sbSidebar.Append(System.Net.WebUtility.HtmlEncode(history[j].Account));
+                sbSidebar.Append("</div></a>");
+            }
+
+            string html = @"<!DOCTYPE html>
 <html lang=""zh-CN"">
 <head>
 <meta charset=""utf-8"">
 <meta name=""viewport"" content=""width=device-width,initial-scale=1"">
-<title>工作报告 - {_latestAccount}</title>
+<title>工作报告</title>
 <style>
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.7;color:#333;background:#fafafa}}
-h1{{font-size:24px;border-bottom:2px solid #5B9BD5;padding-bottom:8px;margin-top:24px}}
-h2{{font-size:18px;color:#3A7BC8;margin-top:20px;margin-bottom:8px}}
-h3{{font-size:15px;color:#555;margin-top:16px;margin-bottom:6px}}
-p{{margin:8px 0}}
-ul,ol{{padding-left:24px;margin:8px 0}}
-li{{margin:4px 0}}
-strong{{color:#222}}
-code{{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-family:Consolas,monospace;font-size:13px}}
-pre{{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;white-space:pre-wrap;font-size:13px;line-height:1.6;overflow-x:auto}}
-blockquote{{border-left:4px solid #5B9BD5;margin:12px 0;padding:4px 16px;color:#666;background:#f5f7fa}}
-hr{{border:none;border-top:1px solid #e0e0e0;margin:20px 0}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;height:100vh;color:#333;background:#fafafa}}
+.side{{width:240px;min-width:240px;background:#f0f2f5;border-right:1px solid #e0e0e0;display:flex;flex-direction:column}}
+.side h2{{font-size:15px;padding:16px;border-bottom:1px solid #e0e0e0;color:#555}}
+.list{{flex:1;overflow-y:auto;padding:8px 0}}
+.item{{display:block;padding:12px 16px;cursor:pointer;border-left:3px solid transparent;text-decoration:none;transition:background .15s}}
+.item:hover{{background:#e8eaed}}
+.item.sel{{background:#dde8f6;border-left-color:#3A7BC8}}
+.item .ti{{font-size:13px;color:#555;font-weight:500}}
+.item .ac{{font-size:11px;color:#999;margin-top:2px}}
+.main{{flex:1;overflow-y:auto;padding:32px 40px;line-height:1.7}}
+.main h1{{font-size:24px;border-bottom:2px solid #5B9BD5;padding-bottom:8px;margin-bottom:8px}}
+.main h2{{font-size:18px;color:#3A7BC8;margin-top:20px;margin-bottom:8px}}
+.main h3{{font-size:15px;color:#555;margin-top:16px;margin-bottom:6px}}
+.main p{{margin:8px 0}}
+.main ul,.main ol{{padding-left:24px;margin:8px 0}}
+.main li{{margin:4px 0}}
+.main strong{{color:#222}}
+.main code{{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-family:Consolas,monospace;font-size:13px}}
+.main pre{{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;white-space:pre-wrap;font-size:13px;line-height:1.6;overflow-x:auto}}
+.main blockquote{{border-left:4px solid #5B9BD5;margin:12px 0;padding:4px 16px;color:#666;background:#f5f7fa}}
+.main hr{{border:none;border-top:1px solid #e0e0e0;margin:20px 0}}
 .time{{color:#999;font-size:13px;margin-bottom:20px}}
+.empty{{padding:40px;color:#999;text-align:center}}
 </style>
 </head>
 <body>
+<div class=""side"">
+<h2>历史报告</h2>
+<div class=""list"">" + sbSidebar.ToString() + @"</div>
+</div>
+<div class=""main"">
 <h1>工作报告</h1>
-<div class=""time"">账号: {System.Net.WebUtility.HtmlEncode(_latestAccount)} | {DateTime.Now:yyyy-MM-dd HH:mm:ss}</div>
-<div>{summaryHtml}</div>
+<div class=""time"">账号: " + System.Net.WebUtility.HtmlEncode(history[startIdx].Account) + @" | " + history[startIdx].Time.ToString("yyyy-MM-dd HH:mm:ss") + @"</div>
+<div>" + summaryHtml + @"</div>
+</div>
 </body>
 </html>";
 
