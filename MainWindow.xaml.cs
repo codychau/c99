@@ -1556,10 +1556,14 @@ namespace C99
                 string configPath = System.IO.Path.Combine(
                     System.IO.Path.GetDirectoryName(ConfigManager.GetConfigFilePath()) ?? AppContext.BaseDirectory,
                     "dream_factory_config.json");
+                string? dir = System.IO.Path.GetDirectoryName(configPath);
+                if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
+                    System.IO.Directory.CreateDirectory(dir);
                 UpdateDreamConfigFromUI();
                 var json = System.Text.Json.JsonSerializer.Serialize(_dreamConfig,
                     new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
                 System.IO.File.WriteAllText(configPath, json);
+                Debug.WriteLine($"AI梦工厂配置已保存到: {configPath}");
             }
             catch (Exception ex) { Debug.WriteLine($"保存AI梦工厂配置失败: {ex.Message}"); }
         }
@@ -1618,21 +1622,23 @@ namespace C99
             if (DreamFactoryCustomModel == null) return;
             DreamFactoryCustomModel.Items.Clear();
             var models = _config.ExternalLLMAvailableModels;
-            if (models.Count == 0)
-            {
-                DreamFactoryCustomModel.PlaceholderText = "请先在设置中获取模型列表...";
-                return;
-            }
+
+            // 确保已保存的模型名在列表中（即使缓存为空或不在缓存中）
+            var displayList = new List<string>(models);
+            string saved = _dreamConfig.CustomModelName;
+            if (!string.IsNullOrEmpty(saved) && !displayList.Contains(saved))
+                displayList.Insert(0, saved);
+
             int selectIdx = -1;
-            for (int i = 0; i < models.Count; i++)
+            for (int i = 0; i < displayList.Count; i++)
             {
-                var item = new ComboBoxItem { Content = models[i], Tag = models[i] };
+                var item = new ComboBoxItem { Content = displayList[i], Tag = displayList[i] };
                 DreamFactoryCustomModel.Items.Add(item);
-                if (models[i] == _dreamConfig.CustomModelName)
+                if (displayList[i] == saved)
                     selectIdx = i;
             }
             if (selectIdx >= 0) DreamFactoryCustomModel.SelectedIndex = selectIdx;
-            DreamFactoryCustomModel.PlaceholderText = $"共 {models.Count} 个模型";
+            DreamFactoryCustomModel.PlaceholderText = displayList.Count > 0 ? $"共 {displayList.Count} 个模型" : "请先在设置中获取模型列表...";
         }
 
         private void UpdateDreamConfigFromUI()
@@ -1753,7 +1759,6 @@ namespace C99
         private void OnDreamFactoryConfigChanged(object sender, object e)
         {
             if (DreamFactoryBuiltInModel == null || DreamFactoryBuiltInModel.SelectedItem == null) return;
-            UpdateDreamConfigFromUI();
             SaveDreamFactoryConfig();
         }
 
