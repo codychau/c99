@@ -1,13 +1,15 @@
 using C99.Models;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-
-namespace C99
+using System.Threading.Tasks;
+ 
+ namespace C99
 {
     internal sealed class TreeNodeData
     {
@@ -21,6 +23,8 @@ namespace C99
     {
         private readonly AIToolItem _config;
         private readonly Action<AIToolItem> _onSave;
+        private readonly Func<AIToolItem, string, Task<string>>? _onDebug;
+        private Button _debugBtn;
         private TextBox _descBox;
         private TextBox _dirBox;
         private TreeView _treeView;
@@ -51,20 +55,103 @@ namespace C99
             ".cmake", ".makefile", ".mk",
         };
 
-        public ToolEditorWindow(AIToolItem config, string title, Action<AIToolItem> onSave)
+        public ToolEditorWindow(AIToolItem config, string title, Action<AIToolItem> onSave, Func<AIToolItem, string, Task<string>>? onDebug = null)
         {
             _config = config;
             _onSave = onSave;
+            _onDebug = onDebug;
             this.Title = $"工具编辑 - {title}";
 
             var rootGrid = new Grid { Margin = new Thickness(20), MinWidth = 700, MinHeight = 500 };
+            rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             this.Content = rootGrid;
 
-            // Row 0: Description
+            // Row 0: Name
+            var namePanel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+            namePanel.Children.Add(new TextBlock
+            {
+                Text = "名称",
+                FontSize = 13,
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+            var nameRow = new Grid();
+            nameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            nameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var nameBox = new TextBox
+            {
+                Height = 34,
+                FontSize = 13,
+                Text = _config.Name,
+                PlaceholderText = "工具名称..."
+            };
+            nameBox.TextChanged += (s, e) => _config.Name = nameBox.Text;
+            Grid.SetColumn(nameBox, 0);
+            nameRow.Children.Add(nameBox);
+
+            var emojiBtn = new Button
+            {
+                Content = _config.Icon,
+                FontSize = 28,
+                Width = 44,
+                Height = 44,
+                Padding = new Thickness(0),
+                Margin = new Thickness(8, 0, 0, 0)
+            };
+            var emojis = new[]
+            {
+                "🎨", "✍️", "🎵", "💬", "📊", "🎬", "📝", "🖼️",
+                "📚", "🛠️", "⚙️", "🔧", "🔨", "🧰", "💡", "🔬",
+                "🔭", "🧪", "🧬", "🎮", "🎲", "🎭", "🎤", "🎧",
+                "🎼", "🎹", "📷", "🎥", "🖥️", "⌨️", "🖱️", "📁",
+                "📂", "🗂️", "📋", "📌", "🔗", "🌐", "🧠", "⭐",
+                "🔥", "💎", "🏆", "🚀", "🌟", "⚡", "🧩", "🎯"
+            };
+            const int cols = 8;
+            int emojiRows = (emojis.Length + cols - 1) / cols;
+            var emojiGrid = new Grid();
+            for (int c = 0; c < cols; c++)
+                emojiGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(44) });
+            for (int r = 0; r < emojiRows; r++)
+                emojiGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(44) });
+            for (int i = 0; i < emojis.Length; i++)
+            {
+                var e = emojis[i];
+                var btn = new Button
+                {
+                    Content = e,
+                    FontSize = 22,
+                    Width = 40,
+                    Height = 40,
+                    Padding = new Thickness(0),
+                    Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                    BorderThickness = new Thickness(0)
+                };
+                btn.Click += (_, _) =>
+                {
+                    _config.Icon = e;
+                    emojiBtn.Content = e;
+                    emojiBtn.Flyout.Hide();
+                };
+                Grid.SetRow(btn, i / cols);
+                Grid.SetColumn(btn, i % cols);
+                emojiGrid.Children.Add(btn);
+            }
+            emojiBtn.Flyout = new Flyout
+            {
+                Content = emojiGrid,
+                Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft
+            };
+            Grid.SetColumn(emojiBtn, 1);
+            nameRow.Children.Add(emojiBtn);
+            namePanel.Children.Add(nameRow);
+            Grid.SetRow(namePanel, 0);
+            rootGrid.Children.Add(namePanel);
+
+            // Row 1: Description
             var descPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
             descPanel.Children.Add(new TextBlock
             {
@@ -83,10 +170,10 @@ namespace C99
             };
             _descBox.TextChanged += (s, e) => _config.Description = _descBox.Text;
             descPanel.Children.Add(_descBox);
-            Grid.SetRow(descPanel, 0);
+            Grid.SetRow(descPanel, 1);
             rootGrid.Children.Add(descPanel);
 
-            // Row 1: Directory path
+            // Row 2: Directory path
             var dirPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
             dirPanel.Children.Add(new TextBlock
             {
@@ -133,10 +220,10 @@ namespace C99
             Grid.SetColumn(browseBtn, 1);
             dirGrid.Children.Add(browseBtn);
             dirPanel.Children.Add(dirGrid);
-            Grid.SetRow(dirPanel, 1);
+            Grid.SetRow(dirPanel, 2);
             rootGrid.Children.Add(dirPanel);
 
-            // Row 2: Split view - TreeView (left) + Preview (right)
+            // Row 3: Split view - TreeView (left) + Preview (right)
             var splitGrid = new Grid { Margin = new Thickness(0, 0, 0, 10) };
             splitGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             splitGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -197,15 +284,30 @@ namespace C99
             Grid.SetColumn(previewBorder, 1);
             splitGrid.Children.Add(previewBorder);
 
-            Grid.SetRow(splitGrid, 2);
+            Grid.SetRow(splitGrid, 3);
             rootGrid.Children.Add(splitGrid);
 
-            // Row 3: Buttons
-            var bottomStack = new StackPanel
+            // Row 4: Buttons
+            var bottomGrid = new Grid();
+            bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            _debugBtn = new Button
             {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right
+                Content = "🧪 调试",
+                FontSize = 14,
+                Height = 36,
+                Padding = new Thickness(16, 0, 16, 0)
             };
+            _debugBtn.Click += async (s, e) => await OnDebugClick();
+            Grid.SetColumn(_debugBtn, 0);
+            bottomGrid.Children.Add(_debugBtn);
+
+            var rightStack = new StackPanel { Orientation = Orientation.Horizontal };
+            Grid.SetColumn(rightStack, 2);
+            bottomGrid.Children.Add(rightStack);
+
             var saveBtn = new Button
             {
                 Content = "保存",
@@ -215,7 +317,7 @@ namespace C99
                 Margin = new Thickness(0, 0, 12, 0)
             };
             saveBtn.Click += (s, e) => { _onSave(_config); this.Close(); };
-            bottomStack.Children.Add(saveBtn);
+            rightStack.Children.Add(saveBtn);
 
             var cancelBtn = new Button
             {
@@ -225,13 +327,104 @@ namespace C99
                 Width = 100
             };
             cancelBtn.Click += (s, e) => this.Close();
-            bottomStack.Children.Add(cancelBtn);
+            rightStack.Children.Add(cancelBtn);
 
-            Grid.SetRow(bottomStack, 3);
-            rootGrid.Children.Add(bottomStack);
+            Grid.SetRow(bottomGrid, 4);
+            rootGrid.Children.Add(bottomGrid);
 
-            // Init
+                // Init
             RefreshTreeView();
+        }
+
+        private async Task OnDebugClick()
+        {
+            if (_onDebug == null) return;
+
+            var inputBox = new TextBox
+            {
+                Height = 120,
+                FontSize = 13,
+                TextWrapping = TextWrapping.Wrap,
+                AcceptsReturn = true
+            };
+
+            var dialog = new ContentDialog
+            {
+                Title = "工具调试",
+                PrimaryButtonText = "开始调试",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = this.Content.XamlRoot,
+                Content = new StackPanel
+                {
+                    Width = 400,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "输入测试上下文（AI 将根据此上下文 + 工具描述决定是否执行工具）：",
+                            TextWrapping = TextWrapping.Wrap,
+                            FontSize = 13,
+                            Margin = new Thickness(0, 0, 0, 8)
+                        },
+                        inputBox
+                    }
+                }
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary) return;
+
+            string context = inputBox.Text.Trim();
+            if (string.IsNullOrEmpty(context))
+                context = "请分析当前内容并决定是否执行此工具。";
+
+            _debugBtn.IsEnabled = false;
+            _debugBtn.Content = "⏳ 调试中...";
+
+            try
+            {
+                string output = await _onDebug(_config, context);
+
+                var outputDialog = new ContentDialog
+                {
+                    Title = "调试结果",
+                    CloseButtonText = "关闭",
+                    XamlRoot = this.Content.XamlRoot,
+                    Content = new ScrollViewer
+                    {
+                        MaxHeight = 400,
+                        Content = new TextBox
+                        {
+                            Text = output,
+                            FontSize = 12,
+                            FontFamily = new FontFamily("Consolas"),
+                            IsReadOnly = true,
+                            TextWrapping = TextWrapping.Wrap,
+                            AcceptsReturn = true,
+                            BorderThickness = new Thickness(0),
+                            MinHeight = 100
+                        }
+                    }
+                };
+                await outputDialog.ShowAsync();
+            }
+            catch (Exception ex)
+            {
+                var errDialog = new ContentDialog
+                {
+                    Title = "调试失败",
+                    Content = ex.Message,
+                    CloseButtonText = "关闭",
+                    XamlRoot = this.Content.XamlRoot
+                };
+                await errDialog.ShowAsync();
+            }
+            finally
+            {
+                _debugBtn.IsEnabled = true;
+                _debugBtn.Content = "🧪 调试";
+            }
         }
 
         private void RefreshTreeView()

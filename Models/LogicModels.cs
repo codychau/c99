@@ -45,6 +45,9 @@ namespace C99.Models
         public Func<string, Task>? LogAsync { get; set; }
         public Func<string, Task<string>>? ExtractKeywordsAsync { get; set; }
         public Action<int>? OnStepExecuted { get; set; }
+        public Func<string, Task<AIToolItem?>>? GetToolByNameAsync { get; set; }
+        public Func<AIToolItem, string, Task<string>>? AnalyzeToolAsync { get; set; }
+        public Func<string, string, string, Task<string>>? ExecuteScriptAsync { get; set; }
 
         private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
@@ -174,6 +177,60 @@ namespace C99.Models
                     {
                         bool confirmed = await ShowPopupConfirmAsync(title, msg);
                         if (!confirmed) return false;
+                    }
+                    break;
+                }
+
+                case "call_tool":
+                {
+                    string toolName = GetParam(p, "tool_name");
+                    string requestContext = Resolve(GetParam(p, "context", "{ai_response}"), context);
+
+                    if (string.IsNullOrEmpty(toolName))
+                    {
+                        await Log("调用工具失败: 未指定工具名称");
+                        break;
+                    }
+
+                    AIToolItem? tool = null;
+                    if (GetToolByNameAsync != null)
+                        tool = await GetToolByNameAsync(toolName);
+
+                    if (tool == null)
+                    {
+                        await Log($"调用工具失败: 未找到工具 \"{toolName}\"");
+                        break;
+                    }
+
+                    await Log($"正在分析工具 [{tool.Name}] 的描述...");
+
+                    if (AnalyzeToolAsync != null)
+                    {
+                        string marker = await AnalyzeToolAsync(tool, requestContext);
+
+                        try
+                        {
+                            var plan = JsonSerializer.Deserialize<ToolMarker>(marker);
+                            if (plan != null && plan.Execute && !string.IsNullOrEmpty(plan.Script))
+                            {
+                                await Log($"AI 决定执行: {plan.Script} {plan.Arguments}");
+                                if (ExecuteScriptAsync != null)
+                                {
+                                    string result = await ExecuteScriptAsync(plan.Script, plan.Arguments, tool.DirectoryPath);
+                                    context["tool_result"] = result;
+                                    string preview = result.Length > 200 ? result[..200] + "..." : result;
+                                    await Log($"工具执行结果: {preview}");
+                                }
+                            }
+                            else
+                            {
+                                await Log("AI 决定不执行此工具");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            await Log($"解析工具执行计划失败: {ex.Message}");
+                        }
                     }
                     break;
                 }
@@ -398,6 +455,13 @@ namespace C99.Models
                 }
             }
             return total;
+        }
+
+        private sealed class ToolMarker
+        {
+            public bool Execute { get; set; }
+            public string Script { get; set; } = "";
+            public string Arguments { get; set; } = "";
         }
     }
 }

@@ -64,6 +64,12 @@ namespace C99
             // 指标服务
             _metricsService = new MetricsService();
 
+            this.SizeChanged += (s, e) =>
+            {
+                if (AIGeneralStoreContent.Visibility == Visibility.Visible)
+                    RebuildAIToolsGrid();
+            };
+
             // 参数防抖保存定时器
             _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
             _saveTimer.Tick += (s, e) =>
@@ -578,7 +584,11 @@ namespace C99
 
         private void OpenToolEditor(AIToolItem tool, string title, Action<AIToolItem> onSave)
         {
-            var win = new ToolEditorWindow(tool, title, onSave);
+            var win = new ToolEditorWindow(tool, title, onSave, async (t, ctx) =>
+            {
+                if (_dreamFactoryService == null) return "AI 梦工厂服务未启动";
+                return await _dreamFactoryService.DebugToolAsync(t, ctx);
+            });
             win.Activate();
         }
 
@@ -733,11 +743,17 @@ namespace C99
             AIToolsGrid.Children.Clear();
             AIToolsGrid.RowDefinitions.Clear();
 
+            // compute available rows based on window height
+            int rows = ComputeToolRows();
+            int toolsPerPage = rows * 3 - 1; // -1 for "创建工具"
+
             var items = _dreamConfig.AITools;
-            int pageOffset = _toolsPage * ToolsPerPage;
-            var pageItems = items.Skip(pageOffset).Take(ToolsPerPage).ToList();
-            int totalCells = 1 + pageItems.Count;
-            int rows = (totalCells + 2) / 3;
+            int pageOffset = _toolsPage * toolsPerPage;
+            var pageItems = items.Skip(pageOffset).Take(toolsPerPage).ToList();
+
+            // set Grid height to fill available space
+            AIToolsGrid.Height = rows * 80;
+
             for (int i = 0; i < rows; i++)
                 AIToolsGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
@@ -746,29 +762,15 @@ namespace C99
 
             for (int i = 0; i < 2; i++)
             {
-                var vLine = new Border
-                {
-                    Width = 1,
-                    Background = dividerBrush,
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    IsHitTestVisible = false
-                };
-                Grid.SetRowSpan(vLine, rows);
-                Grid.SetColumn(vLine, i + 1);
+                var vLine = new Border { Width = 1, Background = dividerBrush, HorizontalAlignment = HorizontalAlignment.Left, IsHitTestVisible = false };
+                Grid.SetRowSpan(vLine, rows); Grid.SetColumn(vLine, i + 1);
                 AIToolsGrid.Children.Add(vLine);
             }
 
             for (int i = 0; i < rows - 1; i++)
             {
-                var hLine = new Border
-                {
-                    Height = 1,
-                    Background = dividerBrush,
-                    VerticalAlignment = VerticalAlignment.Top,
-                    IsHitTestVisible = false
-                };
-                Grid.SetColumnSpan(hLine, 3);
-                Grid.SetRow(hLine, i + 1);
+                var hLine = new Border { Height = 1, Background = dividerBrush, VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
+                Grid.SetColumnSpan(hLine, 3); Grid.SetRow(hLine, i + 1);
                 AIToolsGrid.Children.Add(hLine);
             }
 
@@ -776,37 +778,14 @@ namespace C99
 
             // "创建工具" — always at row=0, col=0
             var newBg = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-            var newBlock = new Border
-            {
-                Tag = "__new__",
-                Background = newBg,
-                Padding = new Thickness(8),
-            };
-            var newStack = new StackPanel
-            {
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Center
-            };
-            newStack.Children.Add(new TextBlock
-            {
-                Text = "＋",
-                FontSize = 28,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x94, 0x94, 0x94))
-            });
-            newStack.Children.Add(new TextBlock
-            {
-                Text = "创建工具",
-                FontSize = 14,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 4, 0, 0),
-                Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x94, 0x94, 0x94))
-            });
+            var newBlock = new Border { Tag = "__new__", Background = newBg, Padding = new Thickness(8) };
+            var newStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+            newStack.Children.Add(new TextBlock { Text = "＋", FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center, Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x94, 0x94, 0x94)) });
+            newStack.Children.Add(new TextBlock { Text = "创建工具", FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0), Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x94, 0x94, 0x94)) });
             newBlock.Child = newStack;
             newBlock.Tapped += OnGridButtonClick;
             AttachHover(newBlock, newBg, hoverColor);
-            Grid.SetRow(newBlock, 0);
-            Grid.SetColumn(newBlock, 0);
+            Grid.SetRow(newBlock, 0); Grid.SetColumn(newBlock, 0);
             AIToolsGrid.Children.Add(newBlock);
 
             // page items
@@ -821,38 +800,14 @@ namespace C99
                     var tool = pageItems[idx++];
 
                     var bgBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-                    var block = new Border
-                    {
-                        Tag = tool.Name,
-                        Background = bgBrush,
-                        Padding = new Thickness(8),
-                    };
-
-                    var stack = new StackPanel
-                    {
-                        VerticalAlignment = VerticalAlignment.Center,
-                        HorizontalAlignment = HorizontalAlignment.Center
-                    };
-                    stack.Children.Add(new TextBlock
-                    {
-                        Text = tool.Icon,
-                        FontSize = 28,
-                        HorizontalAlignment = HorizontalAlignment.Center
-                    });
-                    stack.Children.Add(new TextBlock
-                    {
-                        Text = tool.Name,
-                        FontSize = 14,
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        Margin = new Thickness(0, 4, 0, 0)
-                    });
+                    var block = new Border { Tag = tool.Name, Background = bgBrush, Padding = new Thickness(8) };
+                    var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+                    stack.Children.Add(new TextBlock { Text = tool.Icon, FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center });
+                    stack.Children.Add(new TextBlock { Text = tool.Name, FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) });
                     block.Child = stack;
-
                     block.Tapped += OnGridButtonClick;
                     AttachHover(block, bgBrush, hoverColor);
-
-                    Grid.SetRow(block, r);
-                    Grid.SetColumn(block, cc);
+                    Grid.SetRow(block, r); Grid.SetColumn(block, cc);
                     AIToolsGrid.Children.Add(block);
                 }
             }
@@ -860,13 +815,25 @@ namespace C99
             RebuildPagination();
         }
 
+        private int ComputeToolRows()
+        {
+            double windowH = this.Bounds.Height;
+            double used = 60 + 40 + 60 + 20 + 40 + 20 + 40;
+            double available = windowH - used;
+            int rows = Math.Max(1, (int)(available / 80));
+            return Math.Min(rows, 12);
+        }
+
+        private int GetToolsPerPage() => ComputeToolRows() * 3 - 1;
+
         private void RebuildPagination()
         {
             if (PaginationPanel == null) return;
             PaginationPanel.Children.Clear();
 
+            int toolsPerPage = GetToolsPerPage();
             int total = _dreamConfig.AITools.Count;
-            int totalPages = Math.Max(1, (total + ToolsPerPage - 1) / ToolsPerPage);
+            int totalPages = Math.Max(1, (total + toolsPerPage - 1) / toolsPerPage);
             int cur = _toolsPage;
 
             // prev
@@ -945,7 +912,8 @@ namespace C99
         {
             if (sender is Button btn)
             {
-                int totalPages = Math.Max(1, (_dreamConfig.AITools.Count + ToolsPerPage - 1) / ToolsPerPage);
+                int toolsPerPage = GetToolsPerPage();
+                int totalPages = Math.Max(1, (_dreamConfig.AITools.Count + toolsPerPage - 1) / toolsPerPage);
                 string text = btn.Content?.ToString() ?? "";
 
                 if (btn.Tag?.ToString() == "prev")
@@ -1923,7 +1891,6 @@ namespace C99
         private TrayIconHelper? _trayHelper;
         private DreamFactoryConfig _dreamConfig = new();
         private int _toolsPage = 0;
-        private const int ToolsPerPage = 8;
         private DispatcherTimer? _notificationTimer;
         private DispatcherTimer? _genericNotificationTimer;
         private bool _isLoadingDreamConfig;
@@ -2313,7 +2280,7 @@ namespace C99
                 {
                     plc.PreAILogic = pipeline;
                     SaveDreamFactoryConfig();
-                });
+                }, _dreamConfig.AITools);
                 win.Activate();
             }
         }
@@ -2329,7 +2296,7 @@ namespace C99
                 {
                     plc.PostAILogic = pipeline;
                     SaveDreamFactoryConfig();
-                });
+                }, _dreamConfig.AITools);
                 win.Activate();
             }
         }

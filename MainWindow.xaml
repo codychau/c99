@@ -328,15 +328,13 @@
                     </Grid>
 
                     <!-- 9宫格 -->
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="460">
-                        <Grid x:Name="AIToolsGrid">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                        </Grid>
-                    </ScrollViewer>
+                    <Grid x:Name="AIToolsGrid">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                    </Grid>
 
                     <!-- 底部分页 -->
                     <StackPanel x:Name="PaginationPanel" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0" />

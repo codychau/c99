@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -360,7 +361,87 @@ namespace C99.Services
                     "报告内容：\n" + reportText;
                 return await CallAIAsync(prompt, sys);
             };
+            engine.GetToolByNameAsync = async (name) =>
+            {
+                await Task.CompletedTask;
+                return _config.AITools.FirstOrDefault(t => t.Name == name);
+            };
+            engine.AnalyzeToolAsync = async (tool, requestContext) =>
+            {
+                var plan = await ToolDescriptionAnalyzer.AnalyzeAsync(tool, requestContext, CallAIAsync);
+                return System.Text.Json.JsonSerializer.Serialize(plan);
+            };
+            engine.ExecuteScriptAsync = (scriptName, args, workingDir) =>
+                ExecuteScriptInternalAsync(scriptName, args, workingDir);
             return engine;
+        }
+
+        public async Task<string> DebugToolAsync(AIToolItem tool, string requestContext)
+        {
+            var plan = await ToolDescriptionAnalyzer.AnalyzeAsync(tool, requestContext, CallAIAsync);
+            if (!plan.Execute || string.IsNullOrEmpty(plan.Script))
+                return "AI 决定不执行此工具";
+
+            return await ExecuteScriptInternalAsync(plan.Script, plan.Arguments, tool.DirectoryPath);
+        }
+
+        private async Task<string> ExecuteScriptInternalAsync(string scriptName, string args, string workingDir)
+        {
+            string scriptPath = System.IO.Path.Combine(workingDir, scriptName);
+            if (!System.IO.File.Exists(scriptPath))
+                return $"(脚本不存在: {scriptPath})";
+
+            string ext = System.IO.Path.GetExtension(scriptPath).ToLowerInvariant();
+            ProcessStartInfo psi;
+
+            if (ext == ".ps1")
+            {
+                psi = new ProcessStartInfo("powershell.exe",
+                    $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\" {args}")
+                {
+                    WorkingDirectory = workingDir,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+            }
+            else if (ext == ".bat" || ext == ".cmd")
+            {
+                psi = new ProcessStartInfo("cmd.exe", $"/c \"{scriptPath}\" {args}")
+                {
+                    WorkingDirectory = workingDir,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+            }
+            else
+            {
+                psi = new ProcessStartInfo(scriptPath, args)
+                {
+                    WorkingDirectory = workingDir,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+            }
+
+            try
+            {
+                using var process = Process.Start(psi);
+                if (process == null) return "(进程启动失败)";
+                string output = await process.StandardOutput.ReadToEndAsync();
+                string error = await process.StandardError.ReadToEndAsync();
+                process.WaitForExit();
+                return string.IsNullOrEmpty(error) ? output : $"{output}\nSTDERR:\n{error}";
+            }
+            catch (Exception ex)
+            {
+                return $"(执行失败: {ex.Message})";
+            }
         }
 
         private async Task HandleConfigUpdateAsync(HttpListenerRequest request, HttpListenerResponse response)

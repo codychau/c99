@@ -20,6 +20,7 @@ namespace C99
         private StackPanel _paramPanel;
         private ComboBox _actionTypeCombo;
         private Button _deleteBtn, _moveUpBtn, _moveDownBtn;
+        private readonly List<AIToolItem> _availableTools = new();
 
         private struct ParamDef
         {
@@ -66,13 +67,19 @@ namespace C99
                 new ParamDef { Key = "title", Display = "标题", Control = "text" },
                 new ParamDef { Key = "message", Display = "内容（支持 {var} 模板）", Control = "text_multi" },
             },
+            ["call_tool"] = new[] {
+                new ParamDef { Key = "tool_name", Display = "选择工具", Control = "tool_selector" },
+                new ParamDef { Key = "context", Display = "上下文（模板变量，默认 {ai_response}）", Control = "text", Default = "{ai_response}" },
+            },
         };
 
-        public LogicDesignerWindow(LogicPipeline pipeline, string title, Action<LogicPipeline> onSave)
+        public LogicDesignerWindow(LogicPipeline pipeline, string title, Action<LogicPipeline> onSave, List<AIToolItem>? availableTools = null)
         {
             _pipeline = pipeline;
             _onSave = onSave;
             _pipelineLabel = title;
+            if (availableTools != null)
+                _availableTools = availableTools;
             this.Title = $"逻辑设计器 - {title}";
 
             var rootGrid = new Grid { Margin = new Thickness(16) };
@@ -170,6 +177,7 @@ namespace C99
             AddCbi(_actionTypeCombo, "日志 (log)", "log");
             AddCbi(_actionTypeCombo, "弹窗提醒 (popup_notify)", "popup_notify");
             AddCbi(_actionTypeCombo, "弹窗确认 (popup_confirm)", "popup_confirm");
+            AddCbi(_actionTypeCombo, "调用工具 (call_tool)", "call_tool");
             _actionTypeCombo.SelectionChanged += OnActionTypeChanged;
             Grid.SetRow(_actionTypeCombo, 1);
             rightGrid.Children.Add(_actionTypeCombo);
@@ -221,7 +229,7 @@ namespace C99
                 "http_request" => "HTTP请求",
                 "search_files" => "搜索资料库",
                 "log" => "日志",
-                "popup_notify" => "弹窗提醒", "popup_confirm" => "弹窗确认",
+                "popup_notify" => "弹窗提醒", "popup_confirm" => "弹窗确认", "call_tool" => "调用工具",
                 _ => a.ActionType
             };
             string detail = a.ActionType switch
@@ -231,6 +239,7 @@ namespace C99
                 "search_files" => a.Params.TryGetValue("folder_path", out var v) ? v : "",
                 "popup_notify" => a.Params.TryGetValue("title", out var v) ? v : "",
                 "popup_confirm" => a.Params.TryGetValue("title", out var v) ? v : "",
+                "call_tool" => a.Params.TryGetValue("tool_name", out var v) ? v : "",
                 _ => ""
             };
             return string.IsNullOrEmpty(detail) ? typeName : $"{typeName}: {detail}";
@@ -333,6 +342,67 @@ namespace C99
                     cb.Checked += (s, e) => OnCheckChanged(s, true);
                     cb.Unchecked += (s, e) => OnCheckChanged(s, false);
                     _paramPanel.Children.Add(cb);
+                }
+                else if (d.Control == "tool_selector")
+                {
+                    var container = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
+
+                    var searchBox = new TextBox
+                    {
+                        Height = 32,
+                        FontSize = 13,
+                        PlaceholderText = "搜索工具...",
+                        Margin = new Thickness(0, 0, 0, 6)
+                    };
+                    container.Children.Add(searchBox);
+
+                    var toolList = new ListView
+                    {
+                        Height = 200,
+                        SelectionMode = ListViewSelectionMode.Single,
+                        Tag = d.Key
+                    };
+                    container.Children.Add(toolList);
+
+                    void RefreshToolList(string filter)
+                    {
+                        var filtered = string.IsNullOrEmpty(filter)
+                            ? _availableTools
+                            : _availableTools.Where(t => t.Name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+
+                        var items = new List<string>();
+                        int selIdx = -1;
+                        for (int i = 0; i < filtered.Count; i++)
+                        {
+                            items.Add($"{filtered[i].Icon}  {filtered[i].Name}");
+                            if (filtered[i].Name == currentValue)
+                                selIdx = i;
+                        }
+                        toolList.ItemsSource = items;
+                        toolList.SelectedIndex = selIdx;
+                    }
+
+                    searchBox.TextChanged += (s, e) => RefreshToolList(searchBox.Text);
+
+                    toolList.SelectionChanged += (s, e) =>
+                    {
+                        int idx = toolList.SelectedIndex;
+                        if (idx < 0) return;
+                        var filtered = string.IsNullOrEmpty(searchBox.Text)
+                            ? _availableTools
+                            : _availableTools.Where(t => t.Name.IndexOf(searchBox.Text, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                        if (idx < filtered.Count)
+                        {
+                            string newVal = filtered[idx].Name;
+                            currentValue = newVal;
+                            if (_selectedIndex >= 0 && _selectedIndex < _pipeline.Actions.Count)
+                                _pipeline.Actions[_selectedIndex].Params[d.Key] = newVal;
+                            RefreshActionLabel(_selectedIndex);
+                        }
+                    };
+
+                    RefreshToolList("");
+                    _paramPanel.Children.Add(container);
                 }
                 else if (d.Key == "folder_path" && action.ActionType == "search_files")
                 {
