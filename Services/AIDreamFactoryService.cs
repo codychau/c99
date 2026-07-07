@@ -229,6 +229,12 @@ namespace C99.Services
 
             string finalPrompt = context.TryGetValue("user_prompt", out var modPrompt) ? modPrompt : prompt;
 
+            if (context.TryGetValue("search_file_contents", out var fileContents) && !string.IsNullOrEmpty(fileContents))
+            {
+                finalPrompt += "\n\n--- 搜索到的文件内容 ---\n" + fileContents;
+                Log($"[前置逻辑] 已将搜索到的文件内容附加到 AI 提示中");
+            }
+
             Log("正在调用 AI 生成工作报告...");
             string summary;
             try
@@ -273,6 +279,12 @@ namespace C99.Services
             }
 
             string finalSummary = context.TryGetValue("ai_response", out var modSummary) ? modSummary : summary;
+
+            if (context.TryGetValue("search_file_paths", out var filePaths) && !string.IsNullOrEmpty(filePaths))
+            {
+                finalSummary += "\n\n--- 搜索到的文件 ---\n" + filePaths;
+                Log($"[后置逻辑] 已将搜索到的文件路径附加到报告中");
+            }
             string account = report.Account ?? "";
 
             lock (_reportHistory)
@@ -319,6 +331,20 @@ namespace C99.Services
                 if (OnPopupConfirmAsync != null)
                     return await OnPopupConfirmAsync(title, msg);
                 return true;
+            };
+            engine.ExtractKeywordsAsync = async (reportText) =>
+            {
+                if (reportText.Length > 4000) reportText = reportText.Substring(0, 4000);
+                string sys = "你是文件检索关键词提取助手，只输出关键词，不输出任何解释。";
+                string prompt =
+                    "从下面的工作报告中提取用于在本地文档库检索相关资料的核心关键词。\n" +
+                    "要求：\n" +
+                    "1) 只保留具体名词：人名、系统/项目名称、技术术语、产品名、专有缩写等；\n" +
+                    "2) 忽略通用词，如\"工作报告/摘要/重点/关注/相关/操作/说明/邮件/提醒/信息/更新/情况/事项\"等；\n" +
+                    "3) 最多输出 8 个关键词，用英文逗号分隔，不要编号、不要解释、不要多余文字；\n" +
+                    "4) 若报告中没有可用于检索的具体关键词，只输出：无\n\n" +
+                    "报告内容：\n" + reportText;
+                return await CallAIAsync(prompt, sys);
             };
             return engine;
         }
@@ -411,12 +437,12 @@ namespace C99.Services
             return sb.ToString();
         }
 
-        private async Task<string> CallAIAsync(string prompt)
+        private async Task<string> CallAIAsync(string prompt, string? systemPromptOverride = null)
         {
             string apiUrl = _config.GetEffectiveApiUrl();
             string model = _config.GetEffectiveModelName();
             string apiKey = _config.GetEffectiveApiKey();
-            string systemPrompt = _config.SystemPrompt;
+            string systemPrompt = systemPromptOverride ?? _config.SystemPrompt;
 
             var request = new OpenAIChatRequest
             {
@@ -741,7 +767,37 @@ namespace C99.Services
 
             if (startIdx >= history.Count) startIdx = 0;
 
-            string summaryHtml = Markdig.Markdown.ToHtml(history[startIdx].Summary);
+            string rawSummary = history[startIdx].Summary;
+            const string filesMarker = "--- 搜索到的文件 ---";
+            string bodyPart = rawSummary;
+            string filesHtml = "";
+            int mi = rawSummary.IndexOf(filesMarker, StringComparison.Ordinal);
+            if (mi >= 0)
+            {
+                bodyPart = rawSummary.Substring(0, mi);
+                var paths = rawSummary.Substring(mi + filesMarker.Length)
+                    .Split('\n')
+                    .Select(l => l.Trim())
+                    .Where(l => l.Length > 0)
+                    .ToList();
+                if (paths.Count > 0)
+                {
+                    var sbf = new StringBuilder();
+                    sbf.Append("<div class=\"files\"><div class=\"files-h\">搜索到的文件 (");
+                    sbf.Append(paths.Count);
+                    sbf.Append(")</div><div class=\"files-grid\">");
+                    foreach (var pth in paths)
+                    {
+                        sbf.Append("<div class=\"file-chip\">");
+                        sbf.Append(System.Net.WebUtility.HtmlEncode(pth));
+                        sbf.Append("</div>");
+                    }
+                    sbf.Append("</div></div>");
+                    filesHtml = sbf.ToString();
+                }
+            }
+
+            string summaryHtml = Markdig.Markdown.ToHtml(bodyPart);
 
             var sbSidebar = new StringBuilder();
             for (int j = 0; j < history.Count; j++)
@@ -806,6 +862,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 .time{color:#94a3b8;font-size:13px;margin-bottom:24px;display:flex;align-items:center;gap:6px}
 .time::before{content:'🕐';font-size:14px}
 .empty{padding:40px 0;color:#94a3b8;text-align:center;font-size:14px}
+.files{margin-top:28px;border-top:2px solid #e2e8f0;padding-top:16px}
+.files-h{font-size:12px;color:#64748b;font-weight:600;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
+.files-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.file-chip{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:5px 10px;font-size:6px;line-height:1.5;color:#475569;word-break:break-all}
+@media(max-width:640px){.files-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -817,7 +878,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 <div class=""main-inner"">
 <h1>工作报告</h1>
 <div class=""time"">账号: " + System.Net.WebUtility.HtmlEncode(history[startIdx].Account) + @" | " + history[startIdx].Time.ToString("yyyy-MM-dd HH:mm:ss") + @"</div>
-<div>" + summaryHtml + @"</div>
+<div>" + summaryHtml + filesHtml + @"</div>
 </div>
 </div>
 </body>

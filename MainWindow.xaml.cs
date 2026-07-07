@@ -67,6 +67,7 @@ namespace C99
             // 窗口关闭时终止子进程并保存参数
             this.Closed += (s, e) =>
             {
+                _isClosing = true;
                 if (_runningProcess != null && !_runningProcess.HasExited)
                 {
                     try { _runningProcess.Kill(); } catch { }
@@ -1531,6 +1532,7 @@ namespace C99
         private DispatcherTimer? _notificationTimer;
         private DispatcherTimer? _genericNotificationTimer;
         private bool _isLoadingDreamConfig;
+        private volatile bool _isClosing;
 
         private void LoadDreamFactoryConfig()
         {
@@ -1812,29 +1814,41 @@ namespace C99
 
         private void OnDreamFactoryLog(string msg)
         {
+            if (_isClosing) return;
             DispatcherQueue.TryEnqueue(() =>
             {
-                string nl = Environment.NewLine;
-                DreamFactoryLog.Text += $"[{DateTime.Now:HH:mm:ss}] {msg}{nl}";
-                var lines = DreamFactoryLog.Text.Split(nl);
-                if (lines.Length > 200) DreamFactoryLog.Text = string.Join(nl, lines[^200..]);
+                if (_isClosing) return;
+                try
+                {
+                    string nl = Environment.NewLine;
+                    DreamFactoryLog.Text += $"[{DateTime.Now:HH:mm:ss}] {msg}{nl}";
+                    var lines = DreamFactoryLog.Text.Split(nl);
+                    if (lines.Length > 200) DreamFactoryLog.Text = string.Join(nl, lines[^200..]);
+                }
+                catch (Exception) { }
             });
         }
 
         private void OnDreamFactoryReport(string summary, string account)
         {
+            if (_isClosing) return;
             DispatcherQueue.TryEnqueue(() =>
             {
-                string nl = Environment.NewLine;
-                string header = $"{nl}=== 工作报告 [{DateTime.Now:HH:mm}] {(string.IsNullOrEmpty(account) ? "" : $"账号:{account}")} ==={nl}";
-                DreamFactoryLog.Text += header + summary + nl;
-                DreamFactoryNotificationText.Text = summary;
-                DreamFactoryNotification.Visibility = Visibility.Visible;
-                _notificationTimer?.Stop();
-                _notificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
-                _notificationTimer.Tick += (s, e) =>
-                { _notificationTimer?.Stop(); DreamFactoryNotification.Visibility = Visibility.Collapsed; };
-                _notificationTimer.Start();
+                if (_isClosing) return;
+                try
+                {
+                    string nl = Environment.NewLine;
+                    string header = $"{nl}=== 工作报告 [{DateTime.Now:HH:mm}] {(string.IsNullOrEmpty(account) ? "" : $"账号:{account}")} ==={nl}";
+                    DreamFactoryLog.Text += header + summary + nl;
+                    DreamFactoryNotificationText.Text = summary;
+                    DreamFactoryNotification.Visibility = Visibility.Visible;
+                    _notificationTimer?.Stop();
+                    _notificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+                    _notificationTimer.Tick += (s, e) =>
+                    { _notificationTimer?.Stop(); DreamFactoryNotification.Visibility = Visibility.Collapsed; };
+                    _notificationTimer.Start();
+                }
+                catch (Exception) { }
             });
         }
 
@@ -1936,16 +1950,22 @@ namespace C99
 
         private Task OnGenericPopupNotifyAsync(string title, string message, int autoDismissSeconds)
         {
+            if (_isClosing) return Task.CompletedTask;
             DispatcherQueue.TryEnqueue(() =>
             {
-                GenericNotificationTitle.Text = title;
-                GenericNotificationText.Text = message;
-                GenericNotification.Visibility = Visibility.Visible;
-                _genericNotificationTimer?.Stop();
-                _genericNotificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(autoDismissSeconds) };
-                _genericNotificationTimer.Tick += (s, e) =>
-                { _genericNotificationTimer?.Stop(); GenericNotification.Visibility = Visibility.Collapsed; };
-                _genericNotificationTimer.Start();
+                if (_isClosing) return;
+                try
+                {
+                    GenericNotificationTitle.Text = title;
+                    GenericNotificationText.Text = message;
+                    GenericNotification.Visibility = Visibility.Visible;
+                    _genericNotificationTimer?.Stop();
+                    _genericNotificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(autoDismissSeconds) };
+                    _genericNotificationTimer.Tick += (s, e) =>
+                    { _genericNotificationTimer?.Stop(); GenericNotification.Visibility = Visibility.Collapsed; };
+                    _genericNotificationTimer.Start();
+                }
+                catch (Exception) { }
             });
             return Task.CompletedTask;
         }
@@ -1953,18 +1973,24 @@ namespace C99
         private Task<bool> OnGenericPopupConfirmAsync(string title, string message)
         {
             var tcs = new TaskCompletionSource<bool>();
+            if (_isClosing) { tcs.SetResult(false); return tcs.Task; }
             DispatcherQueue.TryEnqueue(async () =>
             {
-                var dialog = new ContentDialog
+                if (_isClosing) { tcs.TrySetResult(false); return; }
+                try
                 {
-                    Title = title,
-                    Content = message,
-                    PrimaryButtonText = "确认",
-                    CloseButtonText = "取消",
-                    XamlRoot = this.Content.XamlRoot
-                };
-                var result = await dialog.ShowAsync();
-                tcs.SetResult(result == ContentDialogResult.Primary);
+                    var dialog = new ContentDialog
+                    {
+                        Title = title,
+                        Content = message,
+                        PrimaryButtonText = "确认",
+                        CloseButtonText = "取消",
+                        XamlRoot = this.Content.XamlRoot
+                    };
+                    var result = await dialog.ShowAsync();
+                    tcs.TrySetResult(result == ContentDialogResult.Primary);
+                }
+                catch (Exception) { tcs.TrySetResult(false); }
             });
             return tcs.Task;
         }

@@ -27,14 +27,11 @@ namespace C99
             public string Display;
             public string Control;
             public string[]? Options;
+            public string? Default;
         }
 
         private static readonly Dictionary<string, ParamDef[]> ActionParamDefs = new()
         {
-            ["set_variable"] = new[] {
-                new ParamDef { Key = "name", Display = "变量名", Control = "text" },
-                new ParamDef { Key = "value", Display = "值（支持 {var} 模板）", Control = "text" },
-            },
             ["replace_text"] = new[] {
                 new ParamDef { Key = "target", Display = "目标变量", Control = "text" },
                 new ParamDef { Key = "find", Display = "查找内容", Control = "text" },
@@ -45,24 +42,17 @@ namespace C99
                 new ParamDef { Key = "pattern", Display = "正则表达式", Control = "text" },
                 new ParamDef { Key = "replacement", Display = "替换为", Control = "text" },
             },
-            ["prepend_text"] = new[] {
-                new ParamDef { Key = "target", Display = "目标变量", Control = "text" },
-                new ParamDef { Key = "text", Display = "追加文字", Control = "text" },
-            },
-            ["append_text"] = new[] {
-                new ParamDef { Key = "target", Display = "目标变量", Control = "text" },
-                new ParamDef { Key = "text", Display = "追加文字", Control = "text" },
-            },
             ["http_request"] = new[] {
                 new ParamDef { Key = "url", Display = "URL", Control = "text" },
                 new ParamDef { Key = "method", Display = "方法", Control = "combo", Options = new[] { "POST", "GET" } },
                 new ParamDef { Key = "body", Display = "请求体", Control = "text_multi" },
                 new ParamDef { Key = "result_var", Display = "结果存入变量", Control = "text" },
             },
-            ["condition_skip"] = new[] {
-                new ParamDef { Key = "variable", Display = "检查变量", Control = "text" },
-                new ParamDef { Key = "operator", Display = "运算符", Control = "combo", Options = new[] { "contains", "not_contains", "equals", "not_equals", "not_empty", "is_empty", "starts_with", "ends_with" } },
-                new ParamDef { Key = "value", Display = "比较值", Control = "text" },
+            ["search_files"] = new[] {
+                new ParamDef { Key = "folder_path", Display = "文件夹路径", Control = "text" },
+                new ParamDef { Key = "recursive", Display = "递归搜索子目录", Control = "check" },
+                new ParamDef { Key = "keywords", Display = "关键词（逗号分隔，支持 {var} 模板；留空则返回全部）", Control = "text", Default = "{ai_response}" },
+                new ParamDef { Key = "smart_analysis", Display = "智能分析关键词（已停用）", Control = "check" },
             },
             ["log"] = new[] {
                 new ParamDef { Key = "message", Display = "日志内容（支持 {var} 模板）", Control = "text_multi" },
@@ -173,13 +163,10 @@ namespace C99
             rightGrid.Children.Add(new TextBlock { Text = "选择动作类型", FontSize = 12, Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray), Margin = new Thickness(0, 0, 0, 4) });
 
             _actionTypeCombo = new ComboBox { Height = 34, FontSize = 13, Margin = new Thickness(0, 0, 0, 10) };
-            AddCbi(_actionTypeCombo, "设置变量 (set_variable)", "set_variable");
             AddCbi(_actionTypeCombo, "文本替换 (replace_text)", "replace_text");
             AddCbi(_actionTypeCombo, "正则替换 (regex_replace)", "regex_replace");
-            AddCbi(_actionTypeCombo, "前加文字 (prepend_text)", "prepend_text");
-            AddCbi(_actionTypeCombo, "后加文字 (append_text)", "append_text");
             AddCbi(_actionTypeCombo, "HTTP请求 (http_request)", "http_request");
-            AddCbi(_actionTypeCombo, "条件跳过 (condition_skip)", "condition_skip");
+            AddCbi(_actionTypeCombo, "搜索资料库 (search_files)", "search_files");
             AddCbi(_actionTypeCombo, "日志 (log)", "log");
             AddCbi(_actionTypeCombo, "弹窗提醒 (popup_notify)", "popup_notify");
             AddCbi(_actionTypeCombo, "弹窗确认 (popup_confirm)", "popup_confirm");
@@ -200,7 +187,7 @@ namespace C99
             rootGrid.Children.Add(bottomStack);
 
             var saveBtn = new Button { Content = "保存", FontSize = 14, Height = 36, Width = 100, Margin = new Thickness(0, 0, 12, 0) };
-            saveBtn.Click += (s, e) => { _onSave(_pipeline); this.Close(); };
+            saveBtn.Click += (s, e) => { FillDefaults(); _onSave(_pipeline); this.Close(); };
             bottomStack.Children.Add(saveBtn);
 
             var cancelBtn = new Button { Content = "取消", FontSize = 14, Height = 36, Width = 100 };
@@ -229,19 +216,19 @@ namespace C99
         {
             string typeName = a.ActionType switch
             {
-                "set_variable" => "设置变量", "replace_text" => "文本替换",
-                "regex_replace" => "正则替换", "prepend_text" => "前加文字",
-                "append_text" => "后加文字", "http_request" => "HTTP请求",
-                "condition_skip" => "条件跳过", "log" => "日志",
+                "replace_text" => "文本替换",
+                "regex_replace" => "正则替换",
+                "http_request" => "HTTP请求",
+                "search_files" => "搜索资料库",
+                "log" => "日志",
                 "popup_notify" => "弹窗提醒", "popup_confirm" => "弹窗确认",
                 _ => a.ActionType
             };
             string detail = a.ActionType switch
             {
-                "set_variable" => a.Params.TryGetValue("name", out var v) ? v : "",
                 "replace_text" => a.Params.TryGetValue("target", out var v) ? v : "",
                 "http_request" => a.Params.TryGetValue("url", out var v) ? v : "",
-                "condition_skip" => a.Params.TryGetValue("variable", out var v) ? v : "",
+                "search_files" => a.Params.TryGetValue("folder_path", out var v) ? v : "",
                 "popup_notify" => a.Params.TryGetValue("title", out var v) ? v : "",
                 "popup_confirm" => a.Params.TryGetValue("title", out var v) ? v : "",
                 _ => ""
@@ -289,9 +276,21 @@ namespace C99
                 return;
             }
 
+            if (action.ActionType == "search_files")
+            {
+                var note = new TextBlock
+                {
+                    Text = "注意：只会搜索文本文件、markdown文件这些以文本为基础的文件",
+                    FontSize = 12,
+                    Foreground = new SolidColorBrush(Microsoft.UI.Colors.OrangeRed),
+                    Margin = new Thickness(0, 0, 0, 4)
+                };
+                _paramPanel.Children.Add(note);
+            }
+
             foreach (var d in defs)
             {
-                string currentValue = action.Params.TryGetValue(d.Key, out var v) ? v : "";
+                string currentValue = action.Params.TryGetValue(d.Key, out var v) ? v : (d.Default ?? "");
 
                 var label = new TextBlock { Text = d.Display, FontSize = 13, Margin = new Thickness(0, 8, 0, 4) };
                 _paramPanel.Children.Add(label);
@@ -320,6 +319,51 @@ namespace C99
                     };
                     tb.TextChanged += OnParamTextChanged;
                     _paramPanel.Children.Add(tb);
+                }
+                else if (d.Control == "check")
+                {
+                    var cb = new CheckBox
+                    {
+                        Content = d.Display,
+                        FontSize = 13,
+                        Tag = d.Key,
+                        IsChecked = currentValue == "是",
+                        Margin = new Thickness(0, 0, 0, 4)
+                    };
+                    cb.Checked += (s, e) => OnCheckChanged(s, true);
+                    cb.Unchecked += (s, e) => OnCheckChanged(s, false);
+                    _paramPanel.Children.Add(cb);
+                }
+                else if (d.Key == "folder_path" && action.ActionType == "search_files")
+                {
+                    var row = new StackPanel { Orientation = Orientation.Horizontal };
+                    var tb = new TextBox
+                    {
+                        Height = 32, FontSize = 13, Text = currentValue,
+                        Tag = d.Key, MinWidth = 200
+                    };
+                    tb.TextChanged += OnParamTextChanged;
+                    row.Children.Add(tb);
+                    var browseBtn = new Button
+                    {
+                        Content = "浏览",
+                        FontSize = 12,
+                        Height = 32,
+                        Width = 56,
+                        Margin = new Thickness(6, 0, 0, 0)
+                    };
+                    browseBtn.Click += async (s, e) =>
+                    {
+                        var picker = new Windows.Storage.Pickers.FolderPicker();
+                        picker.FileTypeFilter.Add("*");
+                        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+                        var folder = await picker.PickSingleFolderAsync();
+                        if (folder != null)
+                            tb.Text = folder.Path;
+                    };
+                    row.Children.Add(browseBtn);
+                    _paramPanel.Children.Add(row);
                 }
                 else
                 {
@@ -357,6 +401,16 @@ namespace C99
             }
         }
 
+        private void OnCheckChanged(object sender, bool isChecked)
+        {
+            if (_suppressUpdates) return;
+            if (_selectedIndex < 0 || _selectedIndex >= _pipeline.Actions.Count) return;
+            if (sender is CheckBox cb && cb.Tag is string key)
+            {
+                _pipeline.Actions[_selectedIndex].Params[key] = isChecked ? "是" : "否";
+            }
+        }
+
         private void OnActionTypeChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_suppressUpdates) return;
@@ -369,7 +423,7 @@ namespace C99
                 {
                     var newParams = new Dictionary<string, string>();
                     foreach (var d in defs)
-                        newParams[d.Key] = oldAction.Params.TryGetValue(d.Key, out var v) ? v : "";
+                        newParams[d.Key] = oldAction.Params.TryGetValue(d.Key, out var v) ? v : (d.Default ?? "");
                     oldAction.Params = newParams;
                 }
                 RefreshActionList();
@@ -428,6 +482,19 @@ namespace C99
                 (_pipeline.Actions[_selectedIndex + 1], _pipeline.Actions[_selectedIndex]);
             RefreshActionList();
             _actionList.SelectedIndex = _selectedIndex + 1;
+        }
+
+        private void FillDefaults()
+        {
+            foreach (var action in _pipeline.Actions)
+            {
+                if (!ActionParamDefs.TryGetValue(action.ActionType, out var defs)) continue;
+                foreach (var d in defs)
+                {
+                    if (d.Default != null && !action.Params.ContainsKey(d.Key))
+                        action.Params[d.Key] = d.Default;
+                }
+            }
         }
     }
 }
