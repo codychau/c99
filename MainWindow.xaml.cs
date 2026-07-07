@@ -1627,6 +1627,9 @@ namespace C99
                 { DreamFactoryEncoding.SelectedItem = item; break; }
             }
 
+            DreamFactoryMaxTokens.Value = _dreamConfig.MaxTokens;
+            DreamFactoryMaxTokensText.Text = _dreamConfig.MaxTokens.ToString();
+
             UpdateDreamFactoryStatusUI();
         }
 
@@ -1678,6 +1681,8 @@ namespace C99
 
             if (DreamFactoryEncoding?.SelectedItem is ComboBoxItem encItem)
                 _dreamConfig.Base64Encoding = encItem.Tag?.ToString() ?? "auto";
+
+            _dreamConfig.MaxTokens = (int)DreamFactoryMaxTokens.Value;
         }
 
         private void UpdateDreamFactoryStatusUI()
@@ -2030,6 +2035,22 @@ namespace C99
             _config.ExternalLLMApiUrl = SettingsExternalLLMUrl?.Text?.Trim() ?? "";
             _config.ExternalLLMApiKey = SettingsExternalLLMKey?.Text?.Trim() ?? "";
             ConfigManager.Save(_config);
+        }
+
+        private void OnDreamFactoryMaxTokensChanged(object sender, RangeBaseValueChangedEventArgs e)
+        {
+            if (DreamFactoryMaxTokensText == null) return;
+            int val = (int)e.NewValue;
+            DreamFactoryMaxTokensText.Text = val.ToString();
+            _dreamConfig.MaxTokens = val;
+            SaveDreamFactoryConfig();
+        }
+
+        private void OnDreamFactoryMaxTokensTextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (DreamFactoryMaxTokens == null) return;
+            if (int.TryParse(DreamFactoryMaxTokensText.Text, out var v) && v >= 256 && v <= 524288)
+                DreamFactoryMaxTokens.Value = v;
         }
 
         private async void OnFetchExternalModels(object sender, RoutedEventArgs e)

@@ -454,6 +454,21 @@
                                         Margin="8,0,0,0" Click="OnClearExternalModelCache"/>
                             </Grid>
 
+                            <TextBlock Text="最大 Token 数 (MaxTokens)" FontSize="13" Margin="0,0,0,4"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="80"/>
+                                </Grid.ColumnDefinitions>
+                                <Slider x:Name="DreamFactoryMaxTokens" Grid.Column="0"
+                                        Minimum="256" Maximum="524288" Value="8192"
+                                        StepFrequency="256" Margin="0,0,12,0"
+                                        ValueChanged="OnDreamFactoryMaxTokensChanged"/>
+                                <TextBox Grid.Column="1" x:Name="DreamFactoryMaxTokensText"
+                                         Text="8192" FontSize="13"
+                                         TextChanged="OnDreamFactoryMaxTokensTextChanged"/>
+                            </Grid>
+
                             <TextBlock Text="提示：在 AI梦工厂 → 自定义外部模型中选择「使用设置中的模型」后，将自动关联此处的配置。" FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>

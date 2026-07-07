@@ -456,7 +456,7 @@ namespace C99.Services
             {
                 Model = model,
                 Temperature = 0.7f,
-                MaxTokens = 1024,
+                MaxTokens = _config.MaxTokens,
                 Messages = new[]
                 {
                     new OpenAIMessage { Role = "system", Content = systemPrompt },

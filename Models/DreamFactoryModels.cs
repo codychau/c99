@@ -88,6 +88,9 @@ namespace C99.Models
 
         /// <summary>base64 解码编码格式（auto / utf-8 / gb2312 / gbk / big5）</summary>
         public string Base64Encoding { get; set; } = "auto";
+
+        /// <summary>AI 生成最大 Token 数</summary>
+        public int MaxTokens { get; set; } = 8192;
     }
 
     /// <summary>
