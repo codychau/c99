@@ -34,6 +34,9 @@ namespace C99.Services
         private static readonly TimeSpan HistoryMaxAge = TimeSpan.FromDays(1);
         private readonly string _base64Encoding;
 
+        /// <summary>指标服务（由外部注入）</summary>
+        public MetricsService? Metrics { get; set; }
+
         /// <summary>收到新报告时触发</summary>
         public event Action<string, string>? OnReportGenerated;
 
@@ -306,6 +309,8 @@ namespace C99.Services
                 _reportHistory.RemoveAll(h => DateTime.Now - h.Time > HistoryMaxAge);
             }
 
+            try { Metrics?.RecordReport(); } catch { }
+
             OnReportGenerated?.Invoke(finalSummary, account);
 
             // 执行输出动作
@@ -340,6 +345,7 @@ namespace C99.Services
                     return await OnPopupConfirmAsync(title, msg);
                 return true;
             };
+            engine.OnStepExecuted = count => { try { Metrics?.RecordPipelineSteps(count); } catch { } };
             engine.ExtractKeywordsAsync = async (reportText) =>
             {
                 if (reportText.Length > 4000) reportText = reportText.Substring(0, 4000);
@@ -475,13 +481,33 @@ namespace C99.Services
             if (!string.IsNullOrEmpty(apiKey))
                 httpRequest.Headers.Add("Authorization", $"Bearer {apiKey}");
 
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             var httpResponse = await _httpClient.SendAsync(httpRequest);
+            sw.Stop();
             httpResponse.EnsureSuccessStatusCode();
 
             var responseBody = await httpResponse.Content.ReadAsStringAsync();
             var chatResponse = JsonSerializer.Deserialize<OpenAIChatResponse>(responseBody);
 
             var responseText = chatResponse?.Choices?.FirstOrDefault()?.Message?.Content?.Trim();
+
+            // record metrics
+            try
+            {
+                int pt = chatResponse?.Usage?.PromptTokens ?? 0;
+                int ct = chatResponse?.Usage?.CompletionTokens ?? 0;
+                bool isLocal = _config.ModelSource == "BuiltIn";
+                double cost = 0;
+                if (!isLocal)
+                {
+                    double inputPrice = _config.ApiInputPricePerMillion / 1_000_000.0;
+                    double outputPrice = _config.ApiOutputPricePerMillion / 1_000_000.0;
+                    cost = pt * inputPrice + ct * outputPrice;
+                }
+                Metrics?.RecordAICall(pt, ct, sw.Elapsed.TotalMilliseconds, cost, isLocal);
+            }
+            catch { }
+
             return string.IsNullOrEmpty(responseText) ? "(AI 返回空内容)" : responseText;
         }
 

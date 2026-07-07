@@ -100,6 +100,15 @@ namespace C99.Models
         /// <summary>AI 生成最大 Token 数</summary>
         public int MaxTokens { get; set; } = 8192;
 
+        /// <summary>外部模型输入价格（¥/百万tokens）</summary>
+        public double ApiInputPricePerMillion { get; set; } = 0;
+
+        /// <summary>外部模型输出价格（¥/百万tokens）</summary>
+        public double ApiOutputPricePerMillion { get; set; } = 0;
+
+        /// <summary>本地模型价格（¥/百万tokens）</summary>
+        public double LocalPricePerMillion { get; set; } = 2;
+
         /// <summary>AI 杂货铺工具列表</summary>
         public List<AIToolItem> AITools { get; set; } = new()
         {
@@ -188,6 +197,21 @@ namespace C99.Models
     {
         [JsonPropertyName("choices")]
         public OpenAIChoice[] Choices { get; set; } = Array.Empty<OpenAIChoice>();
+
+        [JsonPropertyName("usage")]
+        public OpenAIUsage? Usage { get; set; }
+    }
+
+    public class OpenAIUsage
+    {
+        [JsonPropertyName("prompt_tokens")]
+        public int PromptTokens { get; set; }
+
+        [JsonPropertyName("completion_tokens")]
+        public int CompletionTokens { get; set; }
+
+        [JsonPropertyName("total_tokens")]
+        public int TotalTokens { get; set; }
     }
 
     public class OpenAIChoice

@@ -44,6 +44,7 @@ namespace C99.Models
         public Func<string, string, Task<bool>>? ShowPopupConfirmAsync { get; set; }
         public Func<string, Task>? LogAsync { get; set; }
         public Func<string, Task<string>>? ExtractKeywordsAsync { get; set; }
+        public Action<int>? OnStepExecuted { get; set; }
 
         private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
@@ -55,6 +56,7 @@ namespace C99.Models
             foreach (var action in pipeline.Actions)
             {
                 bool shouldContinue = await ExecuteActionAsync(action, context);
+                OnStepExecuted?.Invoke(1);
                 if (!shouldContinue) break;
             }
 

@@ -88,9 +88,12 @@
         <!-- ========== 内容区 ========== -->
         <ScrollViewer Grid.Column="1" VerticalScrollMode="Auto" VerticalScrollBarVisibility="Auto">
             <StackPanel Margin="20">
-                <!-- 首页 -->
+                <!-- 首页 / Dashboard -->
                 <StackPanel x:Name="HomeContent" Visibility="Visible">
-                    <TextBlock Text="首页 - 欢迎使用 C99 🏠" FontSize="24"/>
+                    <TextBlock Text="控制台" FontSize="24" Margin="0,0,0,16"/>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="480">
+                        <Grid x:Name="DashboardGrid" />
+                    </ScrollViewer>
                 </StackPanel>
 
                 <!-- AI梦工厂 -->
@@ -400,6 +403,19 @@
                                          Text="8192" FontSize="13"
                                          TextChanged="OnDreamFactoryMaxTokensTextChanged"/>
                             </Grid>
+
+                            <!-- 外部模型价格 -->
+                            <TextBlock Text="外部模型输入价格（¥/百万tokens）" FontSize="13" Margin="0,0,0,4"/>
+                            <TextBox x:Name="SettingsApiInputPrice" Height="32" FontSize="13"
+                                     PlaceholderText="0" TextChanged="OnSettingsApiPriceChanged" Margin="0,0,0,6"/>
+
+                            <TextBlock Text="外部模型输出价格（¥/百万tokens）" FontSize="13" Margin="0,0,0,4"/>
+                            <TextBox x:Name="SettingsApiOutputPrice" Height="32" FontSize="13"
+                                     PlaceholderText="0" TextChanged="OnSettingsApiPriceChanged" Margin="0,0,0,6"/>
+
+                            <TextBlock Text="本地模型价格（¥/百万tokens）" FontSize="13" Margin="0,0,0,4"/>
+                            <TextBox x:Name="SettingsLocalPrice" Height="32" FontSize="13"
+                                     PlaceholderText="2" TextChanged="OnSettingsApiPriceChanged" Margin="0,0,0,10"/>
 
                             <TextBlock Text="提示：在 AI梦工厂 → 自定义外部模型中选择「使用设置中的模型」后，将自动关联此处的配置。" FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
                         </StackPanel>

@@ -41,6 +41,13 @@ namespace C99
         private Process? _runningProcess;
         private AppConfig _config = new();
 
+        // ========== 指标 & Dashboard ==========
+        private MetricsService? _metricsService;
+        private DispatcherTimer? _dashboardTimer;
+        private DateTime _engineStartTime;
+        private bool _dashboardBuilt;
+        private List<TextBlock> _dashboardValueTexts = new();
+
         // ========== 参数自动保存（防抖） ==========
         private bool _paramsDirty;
         private DispatcherTimer? _saveTimer;
@@ -53,6 +60,9 @@ namespace C99
 
             // 加载配置并应用到 UI
             LoadConfigAndApply();
+
+            // 指标服务
+            _metricsService = new MetricsService();
 
             // 参数防抖保存定时器
             _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
@@ -129,6 +139,7 @@ namespace C99
 
         private void HideAllContents()
         {
+            _dashboardTimer?.Stop();
             HomeContent.Visibility = Visibility.Collapsed;
             AIDreamFactoryContent.Visibility = Visibility.Collapsed;
             AIGeneralStoreContent.Visibility = Visibility.Collapsed;
@@ -137,7 +148,19 @@ namespace C99
             AIBaseContent.Visibility = Visibility.Collapsed;
         }
 
-        private void ShowHome() { HideAllContents(); HomeContent.Visibility = Visibility.Visible; }
+        private void ShowHome()
+        {
+            HideAllContents();
+            HomeContent.Visibility = Visibility.Visible;
+            if (!_dashboardBuilt) BuildDashboardLayout();
+            UpdateDashboardValues();
+            if (_dashboardTimer == null)
+            {
+                _dashboardTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+                _dashboardTimer.Tick += (s, e) => UpdateDashboardValues();
+            }
+            _dashboardTimer.Start();
+        }
         private void ShowAIDreamFactory() { HideAllContents(); AIDreamFactoryContent.Visibility = Visibility.Visible; }
         private void ShowAIGeneralStore() { HideAllContents(); AIGeneralStoreContent.Visibility = Visibility.Visible; _toolsPage = 0; RebuildAIToolsGrid(); }
         private void ShowSettings() { HideAllContents(); SettingsContent.Visibility = Visibility.Visible; LoadSettingsExternalLLMConfig(); }
@@ -586,6 +609,122 @@ namespace C99
                     });
                 }
             }
+        }
+
+        private void BuildDashboardLayout()
+        {
+            if (DashboardGrid == null) return;
+            DashboardGrid.Children.Clear();
+            DashboardGrid.RowDefinitions.Clear();
+            DashboardGrid.ColumnDefinitions.Clear();
+            _dashboardValueTexts.Clear();
+
+            int rows = 3;
+            for (int i = 0; i < rows; i++)
+                DashboardGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+            DashboardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            DashboardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            DashboardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var divColor = Microsoft.UI.ColorHelper.FromArgb(0x1A, 0x00, 0x00, 0x00);
+            var divBrush = new SolidColorBrush(divColor);
+
+            for (int i = 0; i < 2; i++)
+            {
+                var v = new Border { Width = 1, Background = divBrush, HorizontalAlignment = HorizontalAlignment.Left, IsHitTestVisible = false };
+                Grid.SetRowSpan(v, rows); Grid.SetColumn(v, i + 1);
+                DashboardGrid.Children.Add(v);
+            }
+            for (int i = 0; i < rows - 1; i++)
+            {
+                var h = new Border { Height = 1, Background = divBrush, VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
+                Grid.SetColumnSpan(h, 3); Grid.SetRow(h, i + 1);
+                DashboardGrid.Children.Add(h);
+            }
+
+            var hoverColor = Microsoft.UI.ColorHelper.FromArgb(0x0C, 0x00, 0x00, 0x00);
+
+            var cardDefs = new (string Icon, string Label)[]
+            {
+                ("🤖", "AI调用次数"),
+                ("⚡", "Token总用量"),
+                ("💰", "API费用"),
+                ("🏭", "梦工厂调用"),
+                ("🔧", "流水线步骤"),
+                ("💵", "AI底座费用"),
+                ("⏱️", "AI底座运行"),
+                ("💹", "总费用"),
+                ("📊", "预估月费用"),
+            };
+
+            int idx = 0;
+            for (int r = 0; r < rows; r++)
+            {
+                for (int c = 0; c < 3; c++)
+                {
+                    if (idx >= cardDefs.Length) break;
+                    var (icon, label) = cardDefs[idx++];
+
+                    var bg = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+                    var block = new Border { Background = bg, Padding = new Thickness(16) };
+                    var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+                    stack.Children.Add(new TextBlock { Text = icon, FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center });
+                    var valueTb = new TextBlock { Text = "", FontSize = 22, FontWeight = Microsoft.UI.Text.FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 6, 0, 2) };
+                    _dashboardValueTexts.Add(valueTb);
+                    stack.Children.Add(valueTb);
+                    stack.Children.Add(new TextBlock { Text = label, FontSize = 13, Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x64, 0x7B, 0x8B)), HorizontalAlignment = HorizontalAlignment.Center });
+                    block.Child = stack;
+
+                    Grid.SetRow(block, r); Grid.SetColumn(block, c);
+                    DashboardGrid.Children.Add(block);
+
+                    AttachHover(block, bg, hoverColor);
+                }
+            }
+
+            _dashboardBuilt = true;
+        }
+
+        private void UpdateDashboardValues()
+        {
+            if (DashboardGrid == null || _metricsService == null || !_dashboardBuilt) return;
+
+            var m = _metricsService.GetCurrent();
+            long totalTokens = m.TotalPromptTokens + m.TotalCompletionTokens;
+            double apiCost = m.TotalApiCost;
+            double localCost = m.TotalLocalTokens * (Math.Max(0, _dreamConfig.LocalPricePerMillion) / 1_000_000.0);
+            double totalCost = apiCost + localCost;
+
+            var values = new string[]
+            {
+                $"{m.TotalAICalls:N0} 次",
+                $"{totalTokens:N0}",
+                $"¥ {apiCost:F2}",
+                $"{m.TotalReports:N0} 次",
+                $"{m.TotalPipelineSteps:N0} 次",
+                $"¥ {localCost:F2}",
+                FormatDuration(m.TotalEngineRunSeconds),
+                $"¥ {totalCost:F2}",
+                ProjectedMonthly(totalCost, m.FirstRecord),
+            };
+
+            for (int i = 0; i < _dashboardValueTexts.Count && i < values.Length; i++)
+                _dashboardValueTexts[i].Text = values[i];
+        }
+
+        private static string FormatDuration(double seconds)
+        {
+            if (seconds < 60) return $"{seconds:F0}s";
+            if (seconds < 3600) return $"{seconds / 60:F0}m {seconds % 60:F0}s";
+            return $"{seconds / 3600:F0}h {(seconds % 3600) / 60:F0}m";
+        }
+
+        private static string ProjectedMonthly(double totalCost, DateTime firstRecord)
+        {
+            var days = Math.Max(1, (DateTime.Now - firstRecord).TotalDays);
+            double monthly = totalCost / days * 30;
+            return $"¥ {monthly:F2}";
         }
 
         private void RebuildAIToolsGrid()
@@ -1651,6 +1790,7 @@ namespace C99
 
                     var process = new Process { StartInfo = psi };
                     _runningProcess = process;
+                    _engineStartTime = DateTime.Now;
                     process.OutputDataReceived += (s, e) =>
                     {
                         if (e.Data != null)
@@ -1670,6 +1810,9 @@ namespace C99
                     _ = DispatcherQueue.TryEnqueue(() => AppendLog($"进程已启动 (PID: {pid})"));
 
                     process.WaitForExit();
+
+                    double elapsedSec = (DateTime.Now - _engineStartTime).TotalSeconds;
+                    try { _metricsService?.AddEngineRunTime(elapsedSec); } catch { }
 
                     _ = DispatcherQueue.TryEnqueue(() =>
                     {
@@ -1959,6 +2102,7 @@ namespace C99
             }
             _dreamFactoryService?.Dispose();
             _dreamFactoryService = new AIDreamFactoryService(_dreamConfig);
+            _dreamFactoryService.Metrics = _metricsService;
             _dreamFactoryService.OnLog += OnDreamFactoryLog;
             _dreamFactoryService.OnReportGenerated += OnDreamFactoryReport;
             _dreamFactoryService.OnWebReportReady += ShowWebReportToast;
@@ -2268,6 +2412,10 @@ namespace C99
             SettingsExternalLLMUrl.Text = _config.ExternalLLMApiUrl;
             SettingsExternalLLMKey.Text = _config.ExternalLLMApiKey;
             PopulateSettingsModelCombo();
+
+            SettingsApiInputPrice.Text = _dreamConfig.ApiInputPricePerMillion.ToString("F2");
+            SettingsApiOutputPrice.Text = _dreamConfig.ApiOutputPricePerMillion.ToString("F2");
+            SettingsLocalPrice.Text = _dreamConfig.LocalPricePerMillion.ToString("F2");
         }
 
         private void PopulateSettingsModelCombo()
@@ -2287,6 +2435,17 @@ namespace C99
             _config.ExternalLLMApiUrl = SettingsExternalLLMUrl?.Text?.Trim() ?? "";
             _config.ExternalLLMApiKey = SettingsExternalLLMKey?.Text?.Trim() ?? "";
             ConfigManager.Save(_config);
+        }
+
+        private void OnSettingsApiPriceChanged(object sender, TextChangedEventArgs e)
+        {
+            double.TryParse(SettingsApiInputPrice?.Text, out var inp);
+            double.TryParse(SettingsApiOutputPrice?.Text, out var outp);
+            double.TryParse(SettingsLocalPrice?.Text, out var loc);
+            _dreamConfig.ApiInputPricePerMillion = inp;
+            _dreamConfig.ApiOutputPricePerMillion = outp;
+            _dreamConfig.LocalPricePerMillion = loc;
+            SaveDreamFactoryConfig();
         }
 
         private void OnDreamFactoryMaxTokensChanged(object sender, RangeBaseValueChangedEventArgs e)
