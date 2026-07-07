@@ -326,6 +326,7 @@ namespace C99.Models
 
                 context["search_file_paths"] = string.Join(Environment.NewLine, foundPaths);
                 context["search_file_contents"] = contentsBuilder.ToString();
+                context["search_keywords"] = string.Join(",", keywordList);
                 await Log($"搜索完成: 已读取 {foundPaths.Count} 个文件，总大小 {totalSize / 1024}KB");
             }
             catch (Exception ex)

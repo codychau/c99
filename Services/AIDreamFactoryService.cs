@@ -7,6 +7,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -142,6 +143,9 @@ namespace C99.Services
                             await HandleConfigUpdateAsync(request, response);
                         else
                             await WriteJsonAsync(response, new { error = "Method not allowed" }, 405);
+                        break;
+                    case "/api/file":
+                        await HandleFileViewAsync(request, response);
                         break;
                     case "/report/latest":
                         await HandleReportPageAsync(request, response);
@@ -282,7 +286,11 @@ namespace C99.Services
 
             if (context.TryGetValue("search_file_paths", out var filePaths) && !string.IsNullOrEmpty(filePaths))
             {
-                finalSummary += "\n\n--- 搜索到的文件 ---\n" + filePaths;
+                string keywords = context.TryGetValue("search_keywords", out var kw) ? kw : "";
+                if (!string.IsNullOrEmpty(keywords))
+                    finalSummary += $"\n\n--- 搜索到的文件 ---\n关键词: {keywords}\n" + filePaths;
+                else
+                    finalSummary += "\n\n--- 搜索到的文件 ---\n" + filePaths;
                 Log($"[后置逻辑] 已将搜索到的文件路径附加到报告中");
             }
             string account = report.Account ?? "";
@@ -769,31 +777,46 @@ namespace C99.Services
 
             string rawSummary = history[startIdx].Summary;
             const string filesMarker = "--- 搜索到的文件 ---";
+            const string kwMarker = "关键词:";
             string bodyPart = rawSummary;
             string filesHtml = "";
+            string searchKeywords = "";
             int mi = rawSummary.IndexOf(filesMarker, StringComparison.Ordinal);
             if (mi >= 0)
             {
                 bodyPart = rawSummary.Substring(0, mi);
-                var paths = rawSummary.Substring(mi + filesMarker.Length)
+                var lines = rawSummary.Substring(mi + filesMarker.Length)
                     .Split('\n')
                     .Select(l => l.Trim())
                     .Where(l => l.Length > 0)
                     .ToList();
-                if (paths.Count > 0)
+                if (lines.Count > 0)
                 {
-                    var sbf = new StringBuilder();
-                    sbf.Append("<div class=\"files\"><div class=\"files-h\">搜索到的文件 (");
-                    sbf.Append(paths.Count);
-                    sbf.Append(")</div><div class=\"files-grid\">");
-                    foreach (var pth in paths)
+                    if (lines[0].StartsWith(kwMarker, StringComparison.Ordinal))
                     {
-                        sbf.Append("<div class=\"file-chip\">");
-                        sbf.Append(System.Net.WebUtility.HtmlEncode(pth));
-                        sbf.Append("</div>");
+                        searchKeywords = lines[0].Substring(kwMarker.Length).Trim();
+                        lines.RemoveAt(0);
                     }
-                    sbf.Append("</div></div>");
-                    filesHtml = sbf.ToString();
+                    if (lines.Count > 0)
+                    {
+                        var sbf = new StringBuilder();
+                        sbf.Append("<div class=\"files\"><div class=\"files-h\">搜索到的文件 (");
+                        sbf.Append(lines.Count);
+                        sbf.Append(")</div><div class=\"file-list\">");
+                        string kwEncoded = System.Net.WebUtility.UrlEncode(searchKeywords);
+                        foreach (var pth in lines)
+                        {
+                            sbf.Append("<a class=\"file-link\" href=\"/api/file?path=");
+                            sbf.Append(Uri.EscapeDataString(pth));
+                            sbf.Append("&keyword=");
+                            sbf.Append(kwEncoded);
+                            sbf.Append("\" target=\"_blank\">");
+                            sbf.Append(System.Net.WebUtility.HtmlEncode(pth));
+                            sbf.Append("</a>");
+                        }
+                        sbf.Append("</div></div>");
+                        filesHtml = sbf.ToString();
+                    }
                 }
             }
 
@@ -864,9 +887,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 .empty{padding:40px 0;color:#94a3b8;text-align:center;font-size:14px}
 .files{margin-top:28px;border-top:2px solid #e2e8f0;padding-top:16px}
 .files-h{font-size:12px;color:#64748b;font-weight:600;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
-.files-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.file-chip{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:5px 10px;font-size:6px;line-height:1.5;color:#475569;word-break:break-all}
-@media(max-width:640px){.files-grid{grid-template-columns:1fr}}
+.file-list{display:flex;flex-direction:column;gap:4px}
+.file-link{display:block;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;font-size:12px;line-height:1.5;color:#2563eb;word-break:break-all;text-decoration:none;transition:all .15s}
+.file-link:hover{background:#eff6ff;border-color:#93c5fd}
 </style>
 </head>
 <body>
@@ -889,6 +912,119 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
             response.ContentLength64 = buffer.Length;
             await response.OutputStream.WriteAsync(buffer);
             response.Close();
+        }
+
+        private async Task HandleFileViewAsync(HttpListenerRequest request, HttpListenerResponse response)
+        {
+            string? filePath = request.QueryString["path"];
+            string? keywords = request.QueryString["keyword"] ?? "";
+
+            if (string.IsNullOrEmpty(filePath))
+            {
+                await WriteHtmlAsync(response, "<!DOCTYPE html><html><head><meta charset=utf-8></head><body style='font-family:sans-serif;padding:40px;color:#888'>缺少文件路径参数</body></html>");
+                return;
+            }
+
+            string fullPath;
+            try { fullPath = Path.GetFullPath(filePath); }
+            catch
+            {
+                await WriteHtmlAsync(response, "<!DOCTYPE html><html><head><meta charset=utf-8></head><body style='font-family:sans-serif;padding:40px;color:#888'>无效的文件路径</body></html>");
+                return;
+            }
+
+            if (!File.Exists(fullPath))
+            {
+                await WriteHtmlAsync(response, "<!DOCTYPE html><html><head><meta charset=utf-8></head><body style='font-family:sans-serif;padding:40px;color:#888'>文件不存在或已被删除</body></html>");
+                return;
+            }
+
+            var fileInfo = new FileInfo(fullPath);
+            const long maxViewSize = 1024 * 1024;
+            string fileContent;
+            if (fileInfo.Length > maxViewSize)
+            {
+                fileContent = $"(文件过大，无法预览: {fileInfo.Length / 1024}KB)";
+            }
+            else
+            {
+                try { fileContent = await Task.Run(() => File.ReadAllText(fullPath, Encoding.UTF8)); }
+                catch { fileContent = "(无法读取文件内容，可能为二进制文件)"; }
+            }
+
+            string escapedContent = System.Net.WebUtility.HtmlEncode(fileContent);
+
+            if (!string.IsNullOrEmpty(keywords))
+            {
+                var kwList = keywords.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(k => k.Trim())
+                    .Where(k => k.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderByDescending(k => k.Length)
+                    .ToList();
+                foreach (var kw in kwList)
+                {
+                    string escapedKw = System.Net.WebUtility.HtmlEncode(kw);
+                    escapedContent = Regex.Replace(escapedContent, Regex.Escape(escapedKw), "<mark>$&</mark>", RegexOptions.IgnoreCase);
+                }
+            }
+
+            string fileName = Path.GetFileName(fullPath);
+            string fileSize = fileInfo.Length >= 1024 * 1024
+                ? $"{fileInfo.Length / (1024.0 * 1024.0):F1} MB"
+                : $"{fileInfo.Length / 1024.0:F1} KB";
+            string modTime = fileInfo.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss");
+
+            string encFileName = System.Net.WebUtility.HtmlEncode(fileName);
+            string encFullPath = System.Net.WebUtility.HtmlEncode(fullPath);
+
+            string head = @"<!DOCTYPE html>
+<html lang=""zh-CN"">
+<head>
+<meta charset=""utf-8"">
+<meta name=""viewport"" content=""width=device-width,initial-scale=1"">
+<title>" + encFileName + @" - 文件预览</title>
+<style>
+:root{--bg:#fff;--fg:#1e293b;--muted:#64748b;--border:#e2e8f0;--pre-bg:#f8fafc;--mark-bg:#fef08a;--mark-fg:#1e293b;--h-bg:#f8fafc;--btn-bg:#f1f5f9;--btn-hover:#e2e8f0;--path-fg:#475569}
+.dark{--bg:#0f172a;--fg:#e2e8f0;--muted:#94a3b8;--border:#334155;--pre-bg:#1e293b;--mark-bg:#854d0e;--mark-fg:#fef08a;--h-bg:#1e293b;--btn-bg:#334155;--btn-hover:#475569;--path-fg:#94a3b8}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',monospace;background:var(--bg);color:var(--fg);padding:0;min-height:100vh}
+.header{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;background:var(--h-bg);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;flex-wrap:wrap;gap:8px}
+.header-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.file-name{font-size:16px;font-weight:600}
+.file-path{font-size:12px;color:var(--path-fg);word-break:break-all}
+.file-meta{font-size:12px;color:var(--muted);display:flex;gap:16px}
+.file-meta span{display:inline-flex;align-items:center;gap:4px}
+.toggle-btn{background:var(--btn-bg);border:1px solid var(--border);border-radius:6px;padding:6px 14px;font-size:12px;color:var(--fg);cursor:pointer;transition:all .15s;white-space:nowrap}
+.toggle-btn:hover{background:var(--btn-hover)}
+.content-wrap{padding:24px}
+pre{background:var(--pre-bg);border:1px solid var(--border);border-radius:8px;padding:20px 24px;font-size:13px;line-height:1.7;overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 180px);font-family:'JetBrains Mono','Cascadia Code',Consolas,monospace;tab-size:4}
+pre mark{background:var(--mark-bg);color:var(--mark-fg);border-radius:3px;padding:0 2px}
+.back-link{color:#2563eb;text-decoration:none;font-size:13px;display:inline-flex;align-items:center;gap:4px;margin-bottom:12px;display:inline-block;padding:4px 0}
+.back-link:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<div class=""header"">
+<div class=""header-left"">
+<div><div class=""file-name"">" + encFileName + @"</div>
+<div class=""file-path"">" + encFullPath + @"</div></div>
+<div class=""file-meta""><span>" + fileSize + @"</span><span>" + modTime + @"</span></div>
+</div>
+<button class=""toggle-btn"" id=""themeBtn"" onclick=""toggleTheme()"">&#127769; 暗色</button>
+</div>
+<div class=""content-wrap"">
+<a class=""back-link"" href=""/report/latest"">&larr; 返回报告</a>
+<pre><code>" + escapedContent + @"</code></pre>
+</div>
+<script>
+(function(){var t=localStorage.getItem('fv-theme');if(t==='dark'){document.body.classList.add('dark');document.getElementById('themeBtn').textContent='&#9728;&#65039; 浅色'}})();
+function toggleTheme(){var b=document.body;b.classList.toggle('dark');var isDark=b.classList.contains('dark');document.getElementById('themeBtn').textContent=isDark?'&#9728;&#65039; 浅色':'&#127769; 暗色';localStorage.setItem('fv-theme',isDark?'dark':'light')}
+</script>
+</body>
+</html>";
+
+            await WriteHtmlAsync(response, head);
         }
 
         private async Task SaveMarkdownAsync(PostActionConfig action, string summary)
