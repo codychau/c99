@@ -52,7 +52,7 @@ namespace C99
                 new ParamDef { Key = "folder_path", Display = "文件夹路径", Control = "text" },
                 new ParamDef { Key = "recursive", Display = "递归搜索子目录", Control = "check" },
                 new ParamDef { Key = "keywords", Display = "关键词（逗号分隔，支持 {var} 模板；留空则返回全部）", Control = "text", Default = "{ai_response}" },
-                new ParamDef { Key = "smart_analysis", Display = "智能分析关键词（已停用）", Control = "check" },
+                new ParamDef { Key = "smart_analysis", Display = "智能分析关键词", Control = "check" },
             },
             ["log"] = new[] {
                 new ParamDef { Key = "message", Display = "日志内容（支持 {var} 模板）", Control = "text_multi" },

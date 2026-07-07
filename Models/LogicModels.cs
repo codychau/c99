@@ -124,10 +124,9 @@ namespace C99.Models
                     bool filterRequested = !string.IsNullOrWhiteSpace(keywordSource);
                     string keywordText = keywordSource;
 
-                    // 若关键词来源是一段报告/散文(而非用户手填的短关键词)，交给 AI 提取干净关键词
-                    bool looksLikeProse = keywordSource.Length > 40 || keywordSource.Contains('\n')
-                        || keywordSource.Contains('。') || keywordSource.Contains('，');
-                    if (filterRequested && looksLikeProse && ExtractKeywordsAsync != null)
+                    string smartAnalysis = GetParam(p, "smart_analysis", "否");
+                    bool useAIAnalysis = smartAnalysis == "是";
+                    if (filterRequested && useAIAnalysis && ExtractKeywordsAsync != null)
                     {
                         await Log("正在通过 AI 提取检索关键词...");
                         try

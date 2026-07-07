@@ -1730,6 +1730,15 @@ namespace C99
             ShowWindow(hwnd, 0);
         }
 
+        private void OnDreamFactoryTestClick(object sender, RoutedEventArgs e)
+        {
+            int port = 9527;
+            if (int.TryParse(DreamFactoryPort.Text, out var p) && p > 0 && p <= 65535)
+                port = p;
+            var win = new ApiTestWindow(port);
+            win.Activate();
+        }
+
         public void RestoreFromTray()
         {
             var hwnd = WindowNative.GetWindowHandle(this);

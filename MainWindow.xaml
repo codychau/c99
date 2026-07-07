@@ -108,6 +108,7 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="端口：" VerticalAlignment="Center" FontSize="13"/>
                                 <TextBox x:Name="DreamFactoryPort" Grid.Column="1" Width="80" Height="32"
@@ -120,6 +121,9 @@
                                 <Button x:Name="DreamFactoryTrayBtn" Grid.Column="4"
                                         Content="收起到托盘" FontSize="13" Height="32" Width="100"
                                         Margin="8,0,0,0" Click="OnMinimizeToTrayClick"/>
+                                <Button x:Name="DreamFactoryTestBtn" Grid.Column="5"
+                                        Content="🧪 测试" FontSize="13" Height="32" Width="80"
+                                        Margin="8,0,0,0" Click="OnDreamFactoryTestClick"/>
                             </Grid>
                         </StackPanel>
                     </Border>
