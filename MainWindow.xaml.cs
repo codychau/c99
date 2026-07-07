@@ -2,10 +2,12 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq;
 using System.IO;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
@@ -137,7 +139,7 @@ namespace C99
 
         private void ShowHome() { HideAllContents(); HomeContent.Visibility = Visibility.Visible; }
         private void ShowAIDreamFactory() { HideAllContents(); AIDreamFactoryContent.Visibility = Visibility.Visible; }
-        private void ShowAIGeneralStore() { HideAllContents(); AIGeneralStoreContent.Visibility = Visibility.Visible; }
+        private void ShowAIGeneralStore() { HideAllContents(); AIGeneralStoreContent.Visibility = Visibility.Visible; _toolsPage = 0; RebuildAIToolsGrid(); }
         private void ShowSettings() { HideAllContents(); SettingsContent.Visibility = Visibility.Visible; LoadSettingsExternalLLMConfig(); }
         private void ShowAbout() { HideAllContents(); AboutContent.Visibility = Visibility.Visible; }
         private void ShowAIBase() { HideAllContents(); AIBaseContent.Visibility = Visibility.Visible; }
@@ -551,24 +553,272 @@ namespace C99
             }
         }
 
-        private async void OnGridButtonClick(object sender, RoutedEventArgs e)
+        private void OpenToolEditor(AIToolItem tool, string title, Action<AIToolItem> onSave)
         {
-            if (sender is Button btn && btn.Tag is string label)
+            var win = new ToolEditorWindow(tool, title, onSave);
+            win.Activate();
+        }
+
+        private void OnGridButtonClick(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement el && el.Tag is string label)
             {
-                await ShowDialogAsync("功能入口", $"你点击了: {label}");
+                if (label == "__new__")
+                {
+                    var tool = new AIToolItem { Name = "新工具", Icon = "🛠️" };
+                    OpenToolEditor(tool, "新工具", edited =>
+                    {
+                        _dreamConfig.AITools.Add(edited);
+                        _toolsPage = 0;
+                        SaveDreamFactoryConfig();
+                        RebuildAIToolsGrid();
+                    });
+                    return;
+                }
+
+                var existing = _dreamConfig.AITools.FirstOrDefault(t => t.Name == label);
+                if (existing != null)
+                {
+                    OpenToolEditor(existing, label, edited =>
+                    {
+                        SaveDreamFactoryConfig();
+                        RebuildAIToolsGrid();
+                    });
+                }
             }
         }
 
-        private async void OnPageClick(object sender, RoutedEventArgs e)
+        private void RebuildAIToolsGrid()
         {
-            if (sender is Button pageBtn)
+            if (AIToolsGrid == null) return;
+            AIToolsGrid.Children.Clear();
+            AIToolsGrid.RowDefinitions.Clear();
+
+            var items = _dreamConfig.AITools;
+            int pageOffset = _toolsPage * ToolsPerPage;
+            var pageItems = items.Skip(pageOffset).Take(ToolsPerPage).ToList();
+            int totalCells = 1 + pageItems.Count;
+            int rows = (totalCells + 2) / 3;
+            for (int i = 0; i < rows; i++)
+                AIToolsGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+            var dividerColor = Microsoft.UI.ColorHelper.FromArgb(0x1A, 0x00, 0x00, 0x00);
+            var dividerBrush = new SolidColorBrush(dividerColor);
+
+            for (int i = 0; i < 2; i++)
             {
-                string pageText = pageBtn.Content?.ToString() ?? "";
-                if (pageText == "...") return;
-                string msg = pageText == "◀" || pageText == "▶"
-                    ? $"翻页操作: {pageText}"
-                    : $"跳转到第 {pageText} 页";
-                await ShowDialogAsync("分页", msg);
+                var vLine = new Border
+                {
+                    Width = 1,
+                    Background = dividerBrush,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    IsHitTestVisible = false
+                };
+                Grid.SetRowSpan(vLine, rows);
+                Grid.SetColumn(vLine, i + 1);
+                AIToolsGrid.Children.Add(vLine);
+            }
+
+            for (int i = 0; i < rows - 1; i++)
+            {
+                var hLine = new Border
+                {
+                    Height = 1,
+                    Background = dividerBrush,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    IsHitTestVisible = false
+                };
+                Grid.SetColumnSpan(hLine, 3);
+                Grid.SetRow(hLine, i + 1);
+                AIToolsGrid.Children.Add(hLine);
+            }
+
+            var hoverColor = Microsoft.UI.ColorHelper.FromArgb(0x0C, 0x00, 0x00, 0x00);
+
+            // "创建工具" — always at row=0, col=0
+            var newBg = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            var newBlock = new Border
+            {
+                Tag = "__new__",
+                Background = newBg,
+                Padding = new Thickness(8),
+            };
+            var newStack = new StackPanel
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            newStack.Children.Add(new TextBlock
+            {
+                Text = "＋",
+                FontSize = 28,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x94, 0x94, 0x94))
+            });
+            newStack.Children.Add(new TextBlock
+            {
+                Text = "创建工具",
+                FontSize = 14,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 4, 0, 0),
+                Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x94, 0x94, 0x94))
+            });
+            newBlock.Child = newStack;
+            newBlock.Tapped += OnGridButtonClick;
+            AttachHover(newBlock, newBg, hoverColor);
+            Grid.SetRow(newBlock, 0);
+            Grid.SetColumn(newBlock, 0);
+            AIToolsGrid.Children.Add(newBlock);
+
+            // page items
+            int idx = 0;
+            int startRow = 0, startCol = 1;
+            for (int r = startRow; r < rows; r++)
+            {
+                int cc = (r == startRow) ? startCol : 0;
+                for (; cc < 3; cc++)
+                {
+                    if (idx >= pageItems.Count) break;
+                    var tool = pageItems[idx++];
+
+                    var bgBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+                    var block = new Border
+                    {
+                        Tag = tool.Name,
+                        Background = bgBrush,
+                        Padding = new Thickness(8),
+                    };
+
+                    var stack = new StackPanel
+                    {
+                        VerticalAlignment = VerticalAlignment.Center,
+                        HorizontalAlignment = HorizontalAlignment.Center
+                    };
+                    stack.Children.Add(new TextBlock
+                    {
+                        Text = tool.Icon,
+                        FontSize = 28,
+                        HorizontalAlignment = HorizontalAlignment.Center
+                    });
+                    stack.Children.Add(new TextBlock
+                    {
+                        Text = tool.Name,
+                        FontSize = 14,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        Margin = new Thickness(0, 4, 0, 0)
+                    });
+                    block.Child = stack;
+
+                    block.Tapped += OnGridButtonClick;
+                    AttachHover(block, bgBrush, hoverColor);
+
+                    Grid.SetRow(block, r);
+                    Grid.SetColumn(block, cc);
+                    AIToolsGrid.Children.Add(block);
+                }
+            }
+
+            RebuildPagination();
+        }
+
+        private void RebuildPagination()
+        {
+            if (PaginationPanel == null) return;
+            PaginationPanel.Children.Clear();
+
+            int total = _dreamConfig.AITools.Count;
+            int totalPages = Math.Max(1, (total + ToolsPerPage - 1) / ToolsPerPage);
+            int cur = _toolsPage;
+
+            // prev
+            var prevBtn = new Button { Content = "◀", FontSize = 16, Width = 48, Margin = new Thickness(4), Tag = "prev" };
+            prevBtn.IsEnabled = cur > 0;
+            prevBtn.Click += OnPageClick;
+            PaginationPanel.Children.Add(prevBtn);
+
+            // page numbers
+            int maxVisible = 5;
+            int half = maxVisible / 2;
+            int start = Math.Max(0, cur - half);
+            int end = Math.Min(totalPages - 1, start + maxVisible - 1);
+            if (end - start < maxVisible - 1) start = Math.Max(0, end - maxVisible + 1);
+
+            if (start > 0)
+            {
+                var firstBtn = new Button { Content = "1", FontSize = 16, Width = 48, Margin = new Thickness(4) };
+                firstBtn.Click += OnPageClick;
+                PaginationPanel.Children.Add(firstBtn);
+                if (start > 1)
+                    PaginationPanel.Children.Add(new TextBlock { Text = "...", FontSize = 16, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4) });
+            }
+
+            for (int i = start; i <= end; i++)
+            {
+                var pageBtn = new Button { Content = (i + 1).ToString(), FontSize = 16, Width = 48, Margin = new Thickness(4) };
+                if (i == cur)
+                {
+                    pageBtn.Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x3B, 0x82, 0xF6));
+                    pageBtn.Foreground = new SolidColorBrush(Microsoft.UI.Colors.White);
+                }
+                pageBtn.Click += OnPageClick;
+                PaginationPanel.Children.Add(pageBtn);
+            }
+
+            if (end < totalPages - 1)
+            {
+                if (end < totalPages - 2)
+                    PaginationPanel.Children.Add(new TextBlock { Text = "...", FontSize = 16, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4) });
+                var lastBtn = new Button { Content = totalPages.ToString(), FontSize = 16, Width = 48, Margin = new Thickness(4) };
+                lastBtn.Click += OnPageClick;
+                PaginationPanel.Children.Add(lastBtn);
+            }
+
+            // next
+            var nextBtn = new Button { Content = "▶", FontSize = 16, Width = 48, Margin = new Thickness(4), Tag = "next" };
+            nextBtn.IsEnabled = cur < totalPages - 1;
+            nextBtn.Click += OnPageClick;
+            PaginationPanel.Children.Add(nextBtn);
+        }
+
+        private void AttachHover(Border block, SolidColorBrush brush, Windows.UI.Color targetColor)
+        {
+            block.PointerEntered += (s, e) =>
+            {
+                var anim = new ColorAnimation { To = targetColor, Duration = new Duration(TimeSpan.FromMilliseconds(150)) };
+                Storyboard.SetTarget(anim, brush);
+                Storyboard.SetTargetProperty(anim, "Color");
+                var sb = new Storyboard();
+                sb.Children.Add(anim);
+                sb.Begin();
+            };
+            block.PointerExited += (s, e) =>
+            {
+                var anim = new ColorAnimation { To = Microsoft.UI.Colors.Transparent, Duration = new Duration(TimeSpan.FromMilliseconds(150)) };
+                Storyboard.SetTarget(anim, brush);
+                Storyboard.SetTargetProperty(anim, "Color");
+                var sb = new Storyboard();
+                sb.Children.Add(anim);
+                sb.Begin();
+            };
+        }
+
+        private void OnPageClick(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn)
+            {
+                int totalPages = Math.Max(1, (_dreamConfig.AITools.Count + ToolsPerPage - 1) / ToolsPerPage);
+                string text = btn.Content?.ToString() ?? "";
+
+                if (btn.Tag?.ToString() == "prev")
+                    _toolsPage = Math.Max(0, _toolsPage - 1);
+                else if (btn.Tag?.ToString() == "next")
+                    _toolsPage = Math.Min(totalPages - 1, _toolsPage + 1);
+                else if (int.TryParse(text, out int p))
+                    _toolsPage = Math.Clamp(p - 1, 0, totalPages - 1);
+                else
+                    return;
+
+                RebuildAIToolsGrid();
             }
         }
 
@@ -1529,6 +1779,8 @@ namespace C99
         private AIDreamFactoryService? _dreamFactoryService;
         private TrayIconHelper? _trayHelper;
         private DreamFactoryConfig _dreamConfig = new();
+        private int _toolsPage = 0;
+        private const int ToolsPerPage = 8;
         private DispatcherTimer? _notificationTimer;
         private DispatcherTimer? _genericNotificationTimer;
         private bool _isLoadingDreamConfig;

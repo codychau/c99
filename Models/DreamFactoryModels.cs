@@ -4,6 +4,14 @@ using System.Text.Json.Serialization;
 
 namespace C99.Models
 {
+    public class AIToolItem
+    {
+        public string Name { get; set; } = "";
+        public string Icon { get; set; } = "🛠️";
+        public string Description { get; set; } = "";
+        public string DirectoryPath { get; set; } = "";
+    }
+
     /// <summary>
     /// AI梦工厂配置
     /// </summary>
@@ -91,6 +99,20 @@ namespace C99.Models
 
         /// <summary>AI 生成最大 Token 数</summary>
         public int MaxTokens { get; set; } = 8192;
+
+        /// <summary>AI 杂货铺工具列表</summary>
+        public List<AIToolItem> AITools { get; set; } = new()
+        {
+            new() { Name = "图像生成", Icon = "🎨" },
+            new() { Name = "文本创作", Icon = "✍️" },
+            new() { Name = "音乐创作", Icon = "🎵" },
+            new() { Name = "智能对话", Icon = "💬" },
+            new() { Name = "数据分析", Icon = "📊" },
+            new() { Name = "视频生成", Icon = "🎬" },
+            new() { Name = "代码助手", Icon = "📝" },
+            new() { Name = "图片处理", Icon = "🖼️" },
+            new() { Name = "知识库", Icon = "📚" },
+        };
     }
 
     /// <summary>

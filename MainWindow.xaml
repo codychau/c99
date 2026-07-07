@@ -63,7 +63,7 @@
                         Margin="8,2,8,2" Click="OnAIBaseClick">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="🔧" FontSize="16" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="BtnAIBaseText" Text="  AI底座启动集合" FontSize="14" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="BtnAIBaseText" Text="  AI启动底座" FontSize="14" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
 
@@ -325,86 +325,18 @@
                     </Grid>
 
                     <!-- 9宫格 -->
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-
-                        <!-- 行1 -->
-                        <Button Grid.Row="0" Grid.Column="0" Tag="图像生成" Height="120" Margin="4" Click="OnGridButtonClick">
-                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                <TextBlock Text="🎨" FontSize="28" HorizontalAlignment="Center"/>
-                                <TextBlock Text="图像生成" FontSize="14" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-                            </StackPanel>
-                        </Button>
-                        <Button Grid.Row="0" Grid.Column="1" Tag="文本创作" Height="120" Margin="4" Click="OnGridButtonClick">
-                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                <TextBlock Text="✍️" FontSize="28" HorizontalAlignment="Center"/>
-                                <TextBlock Text="文本创作" FontSize="14" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-                            </StackPanel>
-                        </Button>
-                        <Button Grid.Row="0" Grid.Column="2" Tag="音乐创作" Height="120" Margin="4" Click="OnGridButtonClick">
-                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                <TextBlock Text="🎵" FontSize="28" HorizontalAlignment="Center"/>
-                                <TextBlock Text="音乐创作" FontSize="14" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-                            </StackPanel>
-                        </Button>
-                        <!-- 行2 -->
-                        <Button Grid.Row="1" Grid.Column="0" Tag="智能对话" Height="120" Margin="4" Click="OnGridButtonClick">
-                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                <TextBlock Text="💬" FontSize="28" HorizontalAlignment="Center"/>
-                                <TextBlock Text="智能对话" FontSize="14" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-                            </StackPanel>
-                        </Button>
-                        <Button Grid.Row="1" Grid.Column="1" Tag="数据分析" Height="120" Margin="4" Click="OnGridButtonClick">
-                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                <TextBlock Text="📊" FontSize="28" HorizontalAlignment="Center"/>
-                                <TextBlock Text="数据分析" FontSize="14" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-                            </StackPanel>
-                        </Button>
-                        <Button Grid.Row="1" Grid.Column="2" Tag="视频生成" Height="120" Margin="4" Click="OnGridButtonClick">
-                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                <TextBlock Text="🎬" FontSize="28" HorizontalAlignment="Center"/>
-                                <TextBlock Text="视频生成" FontSize="14" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-                            </StackPanel>
-                        </Button>
-                        <!-- 行3 -->
-                        <Button Grid.Row="2" Grid.Column="0" Tag="代码助手" Height="120" Margin="4" Click="OnGridButtonClick">
-                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                <TextBlock Text="📝" FontSize="28" HorizontalAlignment="Center"/>
-                                <TextBlock Text="代码助手" FontSize="14" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-                            </StackPanel>
-                        </Button>
-                        <Button Grid.Row="2" Grid.Column="1" Tag="图片处理" Height="120" Margin="4" Click="OnGridButtonClick">
-                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                <TextBlock Text="🖼️" FontSize="28" HorizontalAlignment="Center"/>
-                                <TextBlock Text="图片处理" FontSize="14" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-                            </StackPanel>
-                        </Button>
-                        <Button Grid.Row="2" Grid.Column="2" Tag="知识库" Height="120" Margin="4" Click="OnGridButtonClick">
-                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                <TextBlock Text="📚" FontSize="28" HorizontalAlignment="Center"/>
-                                <TextBlock Text="知识库" FontSize="14" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-                            </StackPanel>
-                        </Button>
-                    </Grid>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="460">
+                        <Grid x:Name="AIToolsGrid">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                        </Grid>
+                    </ScrollViewer>
 
                     <!-- 底部分页 -->
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0">
-                        <Button Content="◀" FontSize="16" Width="48" Margin="4" Click="OnPageClick"/>
-                        <Button Content="1" FontSize="16" Width="48" Margin="4" Click="OnPageClick"/>
-                        <Button Content="2" FontSize="16" Width="48" Margin="4" Click="OnPageClick"/>
-                        <Button Content="3" FontSize="16" Width="48" Margin="4" Click="OnPageClick"/>
-                        <Button Content="..." FontSize="16" Width="48" Margin="4"/>
-                        <Button Content="▶" FontSize="16" Width="48" Margin="4" Click="OnPageClick"/>
-                    </StackPanel>
+                    <StackPanel x:Name="PaginationPanel" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0" />
                 </StackPanel>
 
                 <!-- 设置 -->
