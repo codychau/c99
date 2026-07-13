@@ -157,6 +157,16 @@ namespace C99
                     AddLabel("提示：启动服务后，可访问 http://localhost:9527/report/latest" +
                              " 查看最新工作报告（HTML页面）。", fontSize: 12,
                              colorHex: "888888");
+
+                    var queryCheckbox = new CheckBox
+                    {
+                        Content = "允许页面询问",
+                        IsChecked = _config.AllowPageQuery,
+                        Margin = new Thickness(0, 8, 0, 0)
+                    };
+                    queryCheckbox.Checked += (s, e) => _config.AllowPageQuery = true;
+                    queryCheckbox.Unchecked += (s, e) => _config.AllowPageQuery = false;
+                    _paramPanel.Children.Add(queryCheckbox);
                     break;
 
                 default:

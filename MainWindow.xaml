@@ -350,14 +350,33 @@
                             <TextBlock Text="外部大模型设置" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
                             <TextBlock Text="API 地址（基础路径）" FontSize="13" Margin="0,0,0,4"/>
-                            <TextBox x:Name="SettingsExternalLLMUrl" Height="32" FontSize="13"
-                                     PlaceholderText="https://api.openai.com/v1"
-                                     TextChanged="OnSettingsExternalLLMChanged" Margin="0,0,0,10"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0" x:Name="SettingsExternalLLMUrl" Height="32" FontSize="13"
+                                         PlaceholderText="https://api.openai.com/v1"
+                                         TextChanged="OnSettingsExternalLLMChanged"
+                                         LostFocus="OnExternalLLMUrlLostFocus"/>
+                                <Button Grid.Column="1" x:Name="SettingsExternalLLMUrlHistoryBtn" Width="28" Height="32"
+                                        FontSize="11" Content="∨" Padding="2,0"
+                                        Click="OnExternalLLMUrlHistoryClick"/>
+                            </Grid>
 
                             <TextBlock Text="API Key" FontSize="13" Margin="0,0,0,4"/>
-                            <TextBox x:Name="SettingsExternalLLMKey" Height="32" FontSize="13"
-                                     PlaceholderText="sk-..." TextChanged="OnSettingsExternalLLMChanged"
-                                     Margin="0,0,0,10"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0" x:Name="SettingsExternalLLMKey" Height="32" FontSize="13"
+                                         PlaceholderText="sk-..." TextChanged="OnSettingsExternalLLMChanged"
+                                         LostFocus="OnExternalLLMKeyLostFocus"/>
+                                <Button Grid.Column="1" x:Name="SettingsExternalLLMKeyHistoryBtn" Width="28" Height="32"
+                                        FontSize="11" Content="∨" Padding="2,0"
+                                        Click="OnExternalLLMKeyHistoryClick"/>
+                            </Grid>
 
                             <Grid ColumnSpacing="8" Margin="0,0,0,10">
                                 <Grid.ColumnDefinitions>

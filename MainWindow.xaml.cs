@@ -2378,6 +2378,7 @@ namespace C99
         {
             SettingsExternalLLMUrl.Text = _config.ExternalLLMApiUrl;
             SettingsExternalLLMKey.Text = _config.ExternalLLMApiKey;
+            EnsureCurrentInHistory();
             PopulateSettingsModelCombo();
 
             SettingsApiInputPrice.Text = _dreamConfig.ApiInputPricePerMillion.ToString("F2");
@@ -2399,9 +2400,163 @@ namespace C99
 
         private void OnSettingsExternalLLMChanged(object sender, object e)
         {
+            SaveExternalLLMImmediate();
+        }
+
+        private void SaveExternalLLMImmediate()
+        {
             _config.ExternalLLMApiUrl = SettingsExternalLLMUrl?.Text?.Trim() ?? "";
             _config.ExternalLLMApiKey = SettingsExternalLLMKey?.Text?.Trim() ?? "";
             ConfigManager.Save(_config);
+        }
+
+        // ===== 历史记录按钮 =====
+
+        private void OnExternalLLMUrlHistoryClick(object sender, RoutedEventArgs e)
+        {
+            ShowHistoryFlyout((Button)sender, _config.ExternalLLMApiUrlHistory,
+                selected => { SettingsExternalLLMUrl.Text = selected; SaveExternalLLMImmediate(); });
+        }
+
+        private void OnExternalLLMKeyHistoryClick(object sender, RoutedEventArgs e)
+        {
+            ShowHistoryFlyout((Button)sender, _config.ExternalLLMApiKeyHistory,
+                selected => { SettingsExternalLLMKey.Text = selected; SaveExternalLLMImmediate(); });
+        }
+
+        // ===== 失焦时记录历史 =====
+
+        private void OnExternalLLMUrlLostFocus(object sender, RoutedEventArgs e)
+        {
+            string url = SettingsExternalLLMUrl.Text.Trim();
+            if (IsValidUrl(url))
+                AddToUrlHistory(url);
+        }
+
+        private void OnExternalLLMKeyLostFocus(object sender, RoutedEventArgs e)
+        {
+            string key = SettingsExternalLLMKey.Text.Trim();
+            if (!string.IsNullOrEmpty(key))
+                AddToKeyHistory(key);
+        }
+
+        private static bool IsValidUrl(string url)
+        {
+            return !string.IsNullOrEmpty(url)
+                && (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                    || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                && Uri.TryCreate(url, UriKind.Absolute, out _);
+        }
+
+        private void ShowHistoryFlyout(Button target, List<string> items, Action<string> onSelected)
+        {
+            var listView = new ListView
+            {
+                MaxHeight = 300,
+                MinWidth = 280
+            };
+
+            var flyout = new Flyout
+            {
+                Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft
+            };
+
+            foreach (var item in items)
+            {
+                var textBlock = new TextBlock
+                {
+                    Text = item,
+                    FontSize = 13,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Margin = new Thickness(0, 0, 8, 0)
+                };
+
+                var deleteBtn = new Button
+                {
+                    Content = "×",
+                    Width = 24,
+                    Height = 24,
+                    FontSize = 12,
+                    Padding = new Thickness(0),
+                    Opacity = 0.5
+                };
+
+                var grid = new Grid();
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                Grid.SetColumn(textBlock, 0);
+                Grid.SetColumn(deleteBtn, 1);
+                grid.Children.Add(textBlock);
+                grid.Children.Add(deleteBtn);
+
+                var listItem = new ListViewItem { Content = grid };
+
+                textBlock.Tapped += (s, e) =>
+                {
+                    onSelected(item);
+                    flyout.Hide();
+                };
+
+                deleteBtn.Click += (s, e) =>
+                {
+                    items.Remove(item);
+                    ConfigManager.Save(_config);
+                    listView.Items.Remove(listItem);
+                    if (listView.Items.Count == 0)
+                        flyout.Hide();
+                };
+
+                listView.Items.Add(listItem);
+            }
+
+            flyout.Content = listView;
+            target.Flyout = flyout;
+            flyout.ShowAt(target);
+        }
+
+        // ===== 历史记录管理 =====
+
+        private void EnsureCurrentInHistory()
+        {
+            var url = _config.ExternalLLMApiUrl?.Trim();
+            if (!string.IsNullOrEmpty(url) && !_config.ExternalLLMApiUrlHistory.Contains(url))
+            {
+                _config.ExternalLLMApiUrlHistory.Insert(0, url);
+                TrimHistory(_config.ExternalLLMApiUrlHistory);
+            }
+            var key = _config.ExternalLLMApiKey?.Trim();
+            if (!string.IsNullOrEmpty(key) && !_config.ExternalLLMApiKeyHistory.Contains(key))
+            {
+                _config.ExternalLLMApiKeyHistory.Insert(0, key);
+                TrimHistory(_config.ExternalLLMApiKeyHistory);
+            }
+            if (!string.IsNullOrEmpty(url) || !string.IsNullOrEmpty(key))
+                ConfigManager.Save(_config);
+        }
+
+        private void AddToUrlHistory(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return;
+            _config.ExternalLLMApiUrlHistory.Remove(url);
+            _config.ExternalLLMApiUrlHistory.Insert(0, url);
+            TrimHistory(_config.ExternalLLMApiUrlHistory);
+            ConfigManager.Save(_config);
+        }
+
+        private void AddToKeyHistory(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+            _config.ExternalLLMApiKeyHistory.Remove(key);
+            _config.ExternalLLMApiKeyHistory.Insert(0, key);
+            TrimHistory(_config.ExternalLLMApiKeyHistory);
+            ConfigManager.Save(_config);
+        }
+
+        private static void TrimHistory(List<string> list)
+        {
+            while (list.Count > 20)
+                list.RemoveAt(list.Count - 1);
         }
 
         private void OnSettingsApiPriceChanged(object sender, TextChangedEventArgs e)

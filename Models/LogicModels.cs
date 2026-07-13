@@ -36,6 +36,7 @@ namespace C99.Models
         public string SiyuanApiUrl { get; set; } = "http://localhost:6806";
         public string SiyuanApiKey { get; set; } = "";
         public string SiyuanNotebookId { get; set; } = "";
+        public bool AllowPageQuery { get; set; } = false;
     }
 
     public class LogicEngine

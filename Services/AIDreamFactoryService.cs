@@ -24,6 +24,8 @@ namespace C99.Services
             public DateTime Time { get; set; }
             public string Account { get; set; } = "";
             public string Summary { get; set; } = "";
+            public bool AllowPageQuery { get; set; }
+            public MailReportRequest? OriginalReport { get; set; }
         }
 
         private HttpListener? _listener;
@@ -150,6 +152,9 @@ namespace C99.Services
                         break;
                     case "/api/file":
                         await HandleFileViewAsync(request, response);
+                        break;
+                    case "/api/query":
+                        await HandleQueryAsync(request, response);
                         break;
                     case "/report/latest":
                         await HandleReportPageAsync(request, response);
@@ -305,7 +310,9 @@ namespace C99.Services
                 {
                     Time = DateTime.Now,
                     Account = account,
-                    Summary = finalSummary
+                    Summary = finalSummary,
+                    AllowPageQuery = pipelineConfig?.PostAction?.AllowPageQuery ?? false,
+                    OriginalReport = report
                 });
                 _reportHistory.RemoveAll(h => DateTime.Now - h.Time > HistoryMaxAge);
             }
@@ -865,6 +872,72 @@ namespace C99.Services
             }
         }
 
+        private async Task HandleQueryAsync(HttpListenerRequest request, HttpListenerResponse response)
+        {
+            string body;
+            using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+                body = await reader.ReadToEndAsync();
+
+            var data = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(body);
+            string question = (data != null && data.TryGetValue("question", out var q)) ? q.GetString() ?? "" : "";
+
+            if (string.IsNullOrWhiteSpace(question))
+            {
+                await WriteJsonAsync(response, new { error = "问题不能为空" }, 400);
+                return;
+            }
+
+            List<ReportHistoryItem> history;
+            lock (_reportHistory) { history = _reportHistory.ToList(); }
+
+            var contextBuilder = new StringBuilder();
+            contextBuilder.AppendLine("你拥有以下历史邮件报告数据，请基于这些数据回答用户的问题。");
+            contextBuilder.AppendLine("如果数据中找不到相关信息，请如实说明找不到。");
+            contextBuilder.AppendLine();
+
+            int validCount = 0;
+            foreach (var item in history)
+            {
+                if (item.OriginalReport == null) continue;
+                validCount++;
+
+                contextBuilder.AppendLine($"--- 报告 #{validCount} ---");
+                contextBuilder.AppendLine($"时间: {item.Time:yyyy-MM-dd HH:mm:ss}");
+                contextBuilder.AppendLine($"账号: {item.Account}");
+                contextBuilder.AppendLine();
+
+                string reportText = BuildPrompt(item.OriginalReport);
+                if (reportText.Length > 6000)
+                    reportText = reportText[..6000] + "\n...(已截断)";
+                contextBuilder.AppendLine(reportText);
+                contextBuilder.AppendLine();
+            }
+
+            if (validCount == 0)
+            {
+                await WriteJsonAsync(response, new { answer = "暂无可用数据，请先接收邮件报告。" });
+                return;
+            }
+
+            string contextText = contextBuilder.ToString();
+            string queryPrompt = contextText + "\n\n用户问题: " + question;
+
+            try
+            {
+                string answer = await CallAIAsync(queryPrompt,
+                    "你是一个邮件数据分析助手。请基于提供的邮件数据如实回答问题，不要编造信息。" +
+                    "如果数据中找不到相关信息，直接说没有找到即可。回答请使用中文。");
+
+                string answerHtml = Markdig.Markdown.ToHtml(answer ?? "(AI 返回空内容)");
+
+                await WriteJsonAsync(response, new { answer_html = answerHtml });
+            }
+            catch (Exception ex)
+            {
+                await WriteJsonAsync(response, new { answer_html = $"<p style='color:#e11d48;'>AI 调用失败: {System.Net.WebUtility.HtmlEncode(ex.Message)}</p>" });
+            }
+        }
+
         private async Task HandleReportPageAsync(HttpListenerRequest request, HttpListenerResponse response)
         {
             response.Headers.Add("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -928,6 +1001,9 @@ namespace C99.Services
             }
 
             string summaryHtml = Markdig.Markdown.ToHtml(bodyPart);
+
+            bool showQuery = _config.LogicPipelines.TryGetValue(_config.CurrentWorkflow, out var pc)
+                && pc.PostAction?.AllowPageQuery == true;
 
             var sbSidebar = new StringBuilder();
             for (int j = 0; j < history.Count; j++)
@@ -997,6 +1073,34 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 .file-list{display:flex;flex-direction:column;gap:4px}
 .file-link{display:block;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;font-size:12px;line-height:1.5;color:#2563eb;word-break:break-all;text-decoration:none;transition:all .15s}
 .file-link:hover{background:#eff6ff;border-color:#93c5fd}
+.qfab{position:fixed;bottom:32px;right:32px;z-index:100;background:#3b82f6;color:#fff;border:none;border-radius:16px;padding:14px 24px;font-size:15px;font-weight:500;cursor:pointer;box-shadow:0 4px 20px rgba(59,130,246,.4);transition:all .25s;display:flex;align-items:center;gap:8px}
+.qfab:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(59,130,246,.5)}
+.qfab:active{transform:translateY(0)}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.25);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:999;opacity:0;visibility:hidden;transition:opacity .25s,visibility .25s}
+.overlay.show{opacity:1;visibility:visible}
+.modal{background:rgba(255,255,255,.92);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:20px;box-shadow:0 16px 48px rgba(0,0,0,.15);width:92%;max-width:680px;max-height:75vh;display:flex;flex-direction:column;transform:scale(.95);transition:transform .25s}
+.overlay.show .modal{transform:scale(1)}
+.modal-hd{display:flex;align-items:center;justify-content:space-between;padding:20px 24px 0;font-size:15px;font-weight:600;color:#1e293b}
+.modal-close{background:none;border:none;font-size:22px;color:#94a3b8;cursor:pointer;padding:4px 8px;border-radius:6px;transition:background .15s;line-height:1}
+.modal-close:hover{background:#f1f5f9;color:#475569}
+.modal-body{flex:1;overflow-y:auto;padding:16px 24px;min-height:60px}
+.modal-body::-webkit-scrollbar{width:4px}
+.modal-body::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:2px}
+.modal-msg{padding:12px 16px;border-radius:10px;font-size:14px;line-height:1.7;margin-bottom:12px}
+.modal-msg.answer{background:#f1f5f9;border:1px solid #e2e8f0}
+.modal-msg.answer p{margin:6px 0}
+.modal-msg.answer ul,.modal-msg.answer ol{padding-left:22px;margin:6px 0}
+.modal-msg.answer li{margin:3px 0}
+.modal-msg.answer code{background:#fff;color:#e11d48;padding:1px 6px;border-radius:4px;font-size:13px;border:1px solid #e2e8f0;font-family:'JetBrains Mono','Cascadia Code',Consolas,monospace}
+.modal-msg.answer pre{background:#1e293b;color:#e2e8f0;border-radius:8px;padding:14px 18px;font-size:13px;overflow-x:auto;margin:8px 0}
+.modal-msg.answer pre code{background:inherit;color:inherit;padding:0;border:none;font-size:inherit}
+.modal-msg.thinking{color:#64748b;font-style:italic}
+.modal-ft{display:flex;gap:10px;padding:12px 24px 20px;border-top:1px solid #e2e8f0;margin-top:0}
+.modal-ft input{flex:1;padding:10px 14px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;outline:none;transition:border-color .2s}
+.modal-ft input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.12)}
+.modal-ft button{padding:10px 22px;background:#3b82f6;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:500;cursor:pointer;transition:background .2s;white-space:nowrap}
+.modal-ft button:hover{background:#2563eb}
+.modal-ft button:disabled{background:#94a3b8;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -1011,6 +1115,68 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 <div>" + summaryHtml + filesHtml + @"</div>
 </div>
 </div>
+" + (showQuery ? @"<button class=""qfab"" onclick=""toggleQuery()"">💬 询问</button>
+
+<div class=""overlay"" id=""queryOverlay"" onclick=""closeQuery(event)"">
+<div class=""modal"" id=""queryModal"" onclick=""event.stopPropagation()"">
+<div class=""modal-hd"">
+<span>💬 对过往报告提问</span>
+<button class=""modal-close"" onclick=""closeQuery()"">✕</button>
+</div>
+<div class=""modal-body"" id=""queryBody"">
+</div>
+<div class=""modal-ft"">
+<input type=""text"" id=""queryInput"" placeholder=""输入您的问题，例如：最近有没有关于XX异常的邮件？"" onkeydown=""if(event.key==='Enter')sendQuery()"">
+<button id=""queryBtn"" onclick=""sendQuery()"">发送</button>
+</div>
+</div>
+</div>
+
+<script>
+var chatHistory = [];
+function toggleQuery() {
+  document.getElementById('queryOverlay').classList.toggle('show');
+}
+function closeQuery(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('queryOverlay').classList.remove('show');
+}
+function sendQuery() {
+  var input = document.getElementById('queryInput');
+  var btn = document.getElementById('queryBtn');
+  var body = document.getElementById('queryBody');
+  var q = input.value.trim();
+  if (!q) return;
+  input.value = '';
+  btn.disabled = true;
+  chatHistory.push('<div class=""modal-msg answer""><strong>问:</strong> ' + q.replace(/</g,'&lt;') + '</div>');
+  body.innerHTML = chatHistory.join('');
+  body.scrollTop = body.scrollHeight;
+  var thinkDiv = '<div class=""modal-msg thinking"">思考中...</div>';
+  body.insertAdjacentHTML('beforeend', thinkDiv);
+  body.scrollTop = body.scrollHeight;
+  fetch('/api/query', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({question: q})
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    var lastThink = body.querySelector('.modal-msg:last-child');
+    if (lastThink && lastThink.classList.contains('thinking')) lastThink.remove();
+    chatHistory.push('<div class=""modal-msg answer""><strong>答:</strong><br>' + (data.answer_html || '无返回') + '</div>');
+    body.innerHTML = chatHistory.join('');
+    body.scrollTop = body.scrollHeight;
+    btn.disabled = false;
+    input.focus();
+  }).catch(function(err) {
+    var lastThink = body.querySelector('.modal-msg:last-child');
+    if (lastThink && lastThink.classList.contains('thinking')) lastThink.remove();
+    chatHistory.push('<div class=""modal-msg answer"" style=""color:#e11d48;"">请求失败: ' + err.message.replace(/</g,'&lt;') + '</div>');
+    body.innerHTML = chatHistory.join('');
+    body.scrollTop = body.scrollHeight;
+    btn.disabled = false;
+  });
+}
+</script>" : "") + @"
 </body>
 </html>";
 

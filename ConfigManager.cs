@@ -34,6 +34,12 @@ namespace C99
 
         /// <summary>外部大模型可用模型列表（从 API 获取后缓存）</summary>
         public List<string> ExternalLLMAvailableModels { get; set; } = new();
+
+        /// <summary>外部大模型 API 地址历史记录</summary>
+        public List<string> ExternalLLMApiUrlHistory { get; set; } = new();
+
+        /// <summary>外部大模型 API Key 历史记录</summary>
+        public List<string> ExternalLLMApiKeyHistory { get; set; } = new();
     }
 
     /// <summary>
