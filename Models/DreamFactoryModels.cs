@@ -10,6 +10,7 @@ namespace C99.Models
         public string Icon { get; set; } = "🛠️";
         public string Description { get; set; } = "";
         public string DirectoryPath { get; set; } = "";
+        public string Category { get; set; } = "";
     }
 
     /// <summary>

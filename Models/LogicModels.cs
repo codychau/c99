@@ -37,6 +37,8 @@ namespace C99.Models
         public string SiyuanApiKey { get; set; } = "";
         public string SiyuanNotebookId { get; set; } = "";
         public bool AllowPageQuery { get; set; } = false;
+        public bool AllowPageQueryDiskSearch { get; set; } = false;
+        public string QuerySearchToolName { get; set; } = "文件检索";
     }
 
     public class LogicEngine

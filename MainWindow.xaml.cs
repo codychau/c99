@@ -1911,6 +1911,7 @@ namespace C99
                 }
             }
             catch (Exception ex) { Debug.WriteLine($"加载AI梦工厂配置失败: {ex.Message}"); }
+            C99.Services.AIDreamFactoryService.EnsureFileSearchTool(_dreamConfig);
             _isLoadingDreamConfig = true;
             ApplyDreamConfigToUI();
             _isLoadingDreamConfig = false;
@@ -2308,7 +2309,7 @@ namespace C99
             if (_dreamConfig.LogicPipelines.TryGetValue(_dreamConfig.CurrentWorkflow, out var plc))
             {
                 plc.PostAction ??= new PostActionConfig();
-                var win = new PostActionSettingsWindow(plc.PostAction, _dreamConfig.CurrentWorkflow, action =>
+                var win = new PostActionSettingsWindow(plc.PostAction, _dreamConfig.CurrentWorkflow, _dreamConfig.AITools, action =>
                 {
                     plc.PostAction = action;
                     SaveDreamFactoryConfig();

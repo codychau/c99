@@ -10,6 +10,7 @@ namespace C99.Services
         public bool Execute { get; set; }
         public string Script { get; set; } = "";
         public string Arguments { get; set; } = "";
+        public string Raw { get; set; } = "";
     }
 
     public static class ToolDescriptionAnalyzer
@@ -36,33 +37,54 @@ namespace C99.Services
                 "  {\"execute\": false}\n" +
                 "只输出 JSON，不要任何其他文字。";
 
-            string jsonResponse;
+            string jsonResponse = "";
             try
             {
                 jsonResponse = await callAI(prompt, systemPrompt);
             }
             catch
             {
-                return new ToolExecutionPlan { Execute = false };
+                return new ToolExecutionPlan { Execute = false, Raw = "(AI 调用失败)" };
             }
 
-            jsonResponse = jsonResponse.Trim();
-            if (jsonResponse.StartsWith("```"))
+            var plan = TryParsePlan(jsonResponse);
+            if (plan == null)
             {
-                int start = jsonResponse.IndexOf('\n') + 1;
-                int end = jsonResponse.LastIndexOf("```");
-                if (start > 0 && end > start)
-                    jsonResponse = jsonResponse[start..end].Trim();
+                // 部分本地模型首次输出格式不可用，重试一次并强调仅输出 JSON
+                try
+                {
+                    jsonResponse = await callAI(prompt,
+                        systemPrompt + "\n再次强调：只输出一个 JSON 对象，不要包含任何说明文字、注释或代码块标记。");
+                }
+                catch { }
+                plan = TryParsePlan(jsonResponse ?? "");
             }
+
+            if (plan == null)
+                return new ToolExecutionPlan { Execute = false, Raw = jsonResponse ?? "" };
+
+            plan.Raw = jsonResponse ?? "";
+            return plan;
+        }
+
+        /// <summary>从模型输出中提取并解析 JSON 计划（容忍代码块、前后说明文字）。解析失败返回 null。</summary>
+        private static ToolExecutionPlan? TryParsePlan(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return null;
+
+            string t = text.Replace("```json", "").Replace("```", "").Trim();
+            int start = t.IndexOf('{');
+            int end = t.LastIndexOf('}');
+            if (start < 0 || end <= start) return null;
+            t = t.Substring(start, end - start + 1);
 
             try
             {
-                var plan = JsonSerializer.Deserialize<ToolExecutionPlan>(jsonResponse, JsonOptions);
-                return plan ?? new ToolExecutionPlan { Execute = false };
+                return JsonSerializer.Deserialize<ToolExecutionPlan>(t, JsonOptions);
             }
             catch
             {
-                return new ToolExecutionPlan { Execute = false };
+                return null;
             }
         }
 

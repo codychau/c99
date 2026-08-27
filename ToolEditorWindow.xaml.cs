@@ -66,6 +66,7 @@ using System.Threading.Tasks;
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             this.Content = rootGrid;
@@ -173,7 +174,27 @@ using System.Threading.Tasks;
             Grid.SetRow(descPanel, 1);
             rootGrid.Children.Add(descPanel);
 
-            // Row 2: Directory path
+            // Row 2: Category
+            var catPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+            catPanel.Children.Add(new TextBlock
+            {
+                Text = "分类",
+                FontSize = 13,
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+            var catBox = new TextBox
+            {
+                Height = 34,
+                FontSize = 13,
+                Text = _config.Category,
+                PlaceholderText = "工具分类（如：文件检索）..."
+            };
+            catBox.TextChanged += (s, e) => _config.Category = catBox.Text.Trim();
+            catPanel.Children.Add(catBox);
+            Grid.SetRow(catPanel, 2);
+            rootGrid.Children.Add(catPanel);
+
+            // Row 3: Directory path
             var dirPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
             dirPanel.Children.Add(new TextBlock
             {
@@ -220,7 +241,7 @@ using System.Threading.Tasks;
             Grid.SetColumn(browseBtn, 1);
             dirGrid.Children.Add(browseBtn);
             dirPanel.Children.Add(dirGrid);
-            Grid.SetRow(dirPanel, 2);
+            Grid.SetRow(dirPanel, 3);
             rootGrid.Children.Add(dirPanel);
 
             // Row 3: Split view - TreeView (left) + Preview (right)
@@ -284,7 +305,7 @@ using System.Threading.Tasks;
             Grid.SetColumn(previewBorder, 1);
             splitGrid.Children.Add(previewBorder);
 
-            Grid.SetRow(splitGrid, 3);
+            Grid.SetRow(splitGrid, 4);
             rootGrid.Children.Add(splitGrid);
 
             // Row 4: Buttons
@@ -329,7 +350,7 @@ using System.Threading.Tasks;
             cancelBtn.Click += (s, e) => this.Close();
             rightStack.Children.Add(cancelBtn);
 
-            Grid.SetRow(bottomGrid, 4);
+            Grid.SetRow(bottomGrid, 5);
             rootGrid.Children.Add(bottomGrid);
 
                 // Init

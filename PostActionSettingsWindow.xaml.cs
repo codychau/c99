@@ -4,12 +4,14 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace C99
 {
     public sealed partial class PostActionSettingsWindow : Window
     {
         private readonly PostActionConfig _config;
+        private readonly List<AIToolItem> _tools;
         private readonly Action<PostActionConfig> _onSave;
         private StackPanel _paramPanel;
         private bool _suppressUpdate;
@@ -24,9 +26,10 @@ namespace C99
             ["siyuan"] = "上传思源笔记",
         };
 
-        public PostActionSettingsWindow(PostActionConfig config, string workflowName, Action<PostActionConfig> onSave)
+        public PostActionSettingsWindow(PostActionConfig config, string workflowName, List<AIToolItem> tools, Action<PostActionConfig> onSave)
         {
             _config = config;
+            _tools = tools;
             _onSave = onSave;
             this.Title = $"输出动作设置 - {workflowName}";
 
@@ -164,9 +167,113 @@ namespace C99
                         IsChecked = _config.AllowPageQuery,
                         Margin = new Thickness(0, 8, 0, 0)
                     };
-                    queryCheckbox.Checked += (s, e) => _config.AllowPageQuery = true;
-                    queryCheckbox.Unchecked += (s, e) => _config.AllowPageQuery = false;
+
+                    // 子选项：允许页面询问功能检索本地磁盘（依赖"允许页面询问"）
+                    var diskSearchCheckbox = new CheckBox
+                    {
+                        IsChecked = _config.AllowPageQuery && _config.AllowPageQueryDiskSearch,
+                        IsEnabled = _config.AllowPageQuery,
+                        Margin = new Thickness(24, 6, 0, 0)
+                    };
+
+                    var warningIcon = new TextBlock
+                    {
+                        Text = "\uE7BA",
+                        FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+                        FontSize = 12,
+                        Foreground = ParseColor("FF9800") as SolidColorBrush,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(6, 0, 0, 0)
+                    };
+                    ToolTipService.SetToolTip(warningIcon, "可能会造成隐私问题");
+
+                    var diskSearchContent = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal
+                    };
+                    diskSearchContent.Children.Add(new TextBlock
+                    {
+                        Text = "允许页面询问功能检索本地磁盘",
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+                    diskSearchContent.Children.Add(warningIcon);
+                    diskSearchCheckbox.Content = diskSearchContent;
+
+                    // 检索工具选择（仅子项勾选时显示）
+                    var toolPanel = new StackPanel
+                    {
+                        Margin = new Thickness(48, 6, 0, 0),
+                        Visibility = (diskSearchCheckbox.IsChecked == true)
+                            ? Visibility.Visible : Visibility.Collapsed
+                    };
+
+                    toolPanel.Children.Add(new TextBlock
+                    {
+                        Text = "文件检索工具",
+                        FontSize = 13,
+                        Margin = new Thickness(0, 0, 0, 4)
+                    });
+
+                    var toolCombo = new ComboBox
+                    {
+                        Height = 34,
+                        FontSize = 13
+                    };
+                    foreach (var t in _tools.Where(t => t.Category == "文件检索"))
+                        toolCombo.Items.Add(new ComboBoxItem { Content = t.Name, Tag = t.Name });
+                    foreach (var item in toolCombo.Items)
+                    {
+                        if (item is ComboBoxItem ci && ci.Tag?.ToString() == _config.QuerySearchToolName)
+                        {
+                            toolCombo.SelectedItem = item;
+                            break;
+                        }
+                    }
+                    if (toolCombo.SelectedItem == null && toolCombo.Items.Count > 0)
+                        toolCombo.SelectedItem = toolCombo.Items[0];
+                    toolCombo.SelectionChanged += (s, e) =>
+                    {
+                        if (toolCombo.SelectedItem is ComboBoxItem ci && ci.Tag is string name)
+                            _config.QuerySearchToolName = name;
+                    };
+                    toolPanel.Children.Add(toolCombo);
+
+                    toolPanel.Children.Add(new TextBlock
+                    {
+                        Text = "提示：下拉框仅展示分类为\"文件检索\"的工具（可在工具编辑中设置分类）；" +
+                               "检索目录使用后置逻辑\"搜索资料库\"动作中配置的目录。",
+                        FontSize = 11,
+                        Foreground = ParseColor("888888") as SolidColorBrush,
+                        TextWrapping = TextWrapping.Wrap,
+                        Margin = new Thickness(0, 4, 0, 0)
+                    });
+
                     _paramPanel.Children.Add(queryCheckbox);
+                    _paramPanel.Children.Add(diskSearchCheckbox);
+                    _paramPanel.Children.Add(toolPanel);
+
+                    queryCheckbox.Checked += (s, e) =>
+                    {
+                        _config.AllowPageQuery = true;
+                        diskSearchCheckbox.IsEnabled = true;
+                    };
+                    queryCheckbox.Unchecked += (s, e) =>
+                    {
+                        _config.AllowPageQuery = false;
+                        diskSearchCheckbox.IsEnabled = false;
+                        if (diskSearchCheckbox.IsChecked == true)
+                            diskSearchCheckbox.IsChecked = false;
+                    };
+                    diskSearchCheckbox.Checked += (s, e) =>
+                    {
+                        _config.AllowPageQueryDiskSearch = true;
+                        toolPanel.Visibility = Visibility.Visible;
+                    };
+                    diskSearchCheckbox.Unchecked += (s, e) =>
+                    {
+                        _config.AllowPageQueryDiskSearch = false;
+                        toolPanel.Visibility = Visibility.Collapsed;
+                    };
                     break;
 
                 default:

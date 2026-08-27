@@ -25,6 +25,7 @@ namespace C99.Services
             public string Account { get; set; } = "";
             public string Summary { get; set; } = "";
             public bool AllowPageQuery { get; set; }
+            public bool AllowPageQueryDiskSearch { get; set; }
             public MailReportRequest? OriginalReport { get; set; }
         }
 
@@ -312,6 +313,7 @@ namespace C99.Services
                     Account = account,
                     Summary = finalSummary,
                     AllowPageQuery = pipelineConfig?.PostAction?.AllowPageQuery ?? false,
+                    AllowPageQueryDiskSearch = pipelineConfig?.PostAction?.AllowPageQueryDiskSearch ?? false,
                     OriginalReport = report
                 });
                 _reportHistory.RemoveAll(h => DateTime.Now - h.Time > HistoryMaxAge);
@@ -392,7 +394,7 @@ namespace C99.Services
             return await ExecuteScriptInternalAsync(plan.Script, plan.Arguments, tool.DirectoryPath);
         }
 
-        private async Task<string> ExecuteScriptInternalAsync(string scriptName, string args, string workingDir)
+        private async Task<string> ExecuteScriptInternalAsync(string scriptName, string args, string workingDir, bool forceUtf8Output = false)
         {
             string scriptPath = System.IO.Path.Combine(workingDir, scriptName);
             if (!System.IO.File.Exists(scriptPath))
@@ -412,6 +414,7 @@ namespace C99.Services
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
+                if (forceUtf8Output) psi.StandardOutputEncoding = Encoding.UTF8;
             }
             else if (ext == ".bat" || ext == ".cmd")
             {
@@ -919,6 +922,16 @@ namespace C99.Services
                 return;
             }
 
+            // 可选：调用本地文件检索工具，把检索结果附加到上下文
+            if (_config.LogicPipelines.TryGetValue(_config.CurrentWorkflow, out var queryPc)
+                && queryPc.PostAction?.AllowPageQuery == true
+                && queryPc.PostAction?.AllowPageQueryDiskSearch == true)
+            {
+                string note = await AppendDiskSearchContextAsync(contextBuilder, question,
+                    queryPc.PostAction.QuerySearchToolName);
+                if (!string.IsNullOrEmpty(note)) Log($"[页面询问] {note}");
+            }
+
             string contextText = contextBuilder.ToString();
             string queryPrompt = contextText + "\n\n用户问题: " + question;
 
@@ -926,7 +939,7 @@ namespace C99.Services
             {
                 string answer = await CallAIAsync(queryPrompt,
                     "你是一个邮件数据分析助手。请基于提供的邮件数据如实回答问题，不要编造信息。" +
-                    "如果数据中找不到相关信息，直接说没有找到即可。回答请使用中文。");
+                    "如果提供了本地文件检索结果，可参考其中的内容。如果数据中找不到相关信息，直接说没有找到即可。回答请使用中文。");
 
                 string answerHtml = Markdig.Markdown.ToHtml(answer ?? "(AI 返回空内容)");
 
@@ -936,6 +949,128 @@ namespace C99.Services
             {
                 await WriteJsonAsync(response, new { answer_html = $"<p style='color:#e11d48;'>AI 调用失败: {System.Net.WebUtility.HtmlEncode(ex.Message)}</p>" });
             }
+        }
+
+        /// <summary>在页面提问时调用文件检索工具，将结果追加到上下文。返回提示信息（无异常则返回非空串）。</summary>
+        private async Task<string> AppendDiskSearchContextAsync(StringBuilder contextBuilder, string question, string toolName)
+        {
+            try
+            {
+                AIToolItem? tool = _config.AITools.FirstOrDefault(t => t.Name == toolName);
+                if (tool == null)
+                {
+                    contextBuilder.AppendLine("(未找到文件检索工具，未检索本地磁盘)");
+                    return $"未找到文件检索工具 \"{toolName}\"";
+                }
+
+                string folder = GetQuerySearchFolder();
+                if (string.IsNullOrEmpty(folder))
+                {
+                    contextBuilder.AppendLine("(未配置检索目录，未检索本地磁盘)");
+                    return "未配置检索目录（后置逻辑中无\"搜索资料库\"动作）";
+                }
+
+                string requestContext =
+                    $"用户问题: {question}\n" +
+                    $"检索目录: {folder}\n" +
+                    "请在指定目录中检索与用户问题相关的本地文本文件资料。";
+
+                var plan = await ToolDescriptionAnalyzer.AnalyzeAsync(tool, requestContext, CallAIAsync);
+
+                string result;
+                if (plan.Execute && !string.IsNullOrEmpty(plan.Script))
+                {
+                    Log($"[页面询问] 检索工具(AI计划): {plan.Script} {plan.Arguments}");
+                    result = await ExecuteScriptInternalAsync(plan.Script, plan.Arguments, tool.DirectoryPath, forceUtf8Output: true);
+                }
+                else
+                {
+                    string rawPreview = string.IsNullOrEmpty(plan.Raw) ? "(无返回)" :
+                        (plan.Raw.Length > 300 ? plan.Raw[..300] + "..." : plan.Raw);
+                    Log($"[页面询问] AI 未生成检索计划（原始返回: {rawPreview}），改用确定性调用");
+                    result = await ExecuteFileSearchFallbackAsync(tool, question, folder);
+                }
+
+                string truncated = result.Length > 20000 ? result[..20000] + "\n...(已截断)" : result;
+                if (string.IsNullOrWhiteSpace(truncated))
+                {
+                    contextBuilder.AppendLine("(本地文件检索无结果)");
+                    return "本地文件检索无结果";
+                }
+
+                contextBuilder.AppendLine();
+                contextBuilder.AppendLine("--- 本地文件检索结果 ---");
+                contextBuilder.AppendLine(truncated);
+                contextBuilder.AppendLine();
+                return $"已检索本地文件，结果 {truncated.Length} 字符";
+            }
+            catch (Exception ex)
+            {
+                contextBuilder.AppendLine($"(本地文件检索失败: {ex.Message})");
+                return $"本地文件检索异常: {ex.Message}";
+            }
+        }
+
+        /// <summary>确定性调用文件检索工具：AI 提取关键词后直接执行描述中声明的脚本</summary>
+        private async Task<string> ExecuteFileSearchFallbackAsync(AIToolItem tool, string question, string folder)
+        {
+            string script = ResolveScriptFromDescription(tool.Description);
+            string keywords = await ExtractSearchKeywordsFromQuestionAsync(question);
+            if (string.IsNullOrWhiteSpace(keywords))
+            {
+                Log("[页面询问] 未能从问题提取检索关键词，跳过文件检索");
+                return "(未能从问题提取检索关键词)";
+            }
+
+            string args = $"\"{folder}\" \"{keywords}\"";
+            Log($"[页面询问] 检索工具(确定性): {script} {args}");
+            return await ExecuteScriptInternalAsync(script, args, tool.DirectoryPath, forceUtf8Output: true);
+        }
+
+        /// <summary>从工具描述中声明的"脚本: xxx"解析脚本文件名，未声明时回退 search.ps1</summary>
+        private static string ResolveScriptFromDescription(string description)
+        {
+            if (!string.IsNullOrEmpty(description))
+            {
+                var m = Regex.Match(description, @"脚本[:：]\s*([^\s，,。、;；]+)");
+                if (m.Success && !string.IsNullOrWhiteSpace(m.Groups[1].Value))
+                    return m.Groups[1].Value.Trim();
+            }
+            return "search.ps1";
+        }
+
+        /// <summary>从用户问题中提取本地文档检索关键词（只输出关键词，不解释）</summary>
+        private async Task<string> ExtractSearchKeywordsFromQuestionAsync(string question)
+        {
+            string sys = "你是文件检索关键词提取助手，只输出关键词，不输出任何解释。";
+            string prompt =
+                "从下面的用户问题中提取用于本地文档检索的核心关键词。\n" +
+                "要求：\n" +
+                "1) 只保留具体名词：人名、系统/项目名称、技术术语、产品名、专有缩写等；\n" +
+                "2) 忽略通用词，如\"问题/情况/文档/有没有/关于\"等；\n" +
+                "3) 最多输出 8 个关键词，用英文逗号分隔，不要编号、不要解释、不要多余文字；\n" +
+                "4) 若问题中没有可用于检索的具体关键词，只输出：无\n\n" +
+                "用户问题：\n" + question;
+
+            string result = (await CallAIAsync(prompt, sys) ?? "").Trim();
+            if (result == "无" || result.Equals("none", StringComparison.OrdinalIgnoreCase))
+                return "";
+
+            return string.Join(" ", result.Split(',', '，', '、', ' ')
+                .Select(s => s.Trim())
+                .Where(s => s.Length > 0));
+        }
+
+        /// <summary>从当前工作流后置逻辑的 search_files 动作读取检索目录</summary>
+        private string GetQuerySearchFolder()
+        {
+            if (!_config.LogicPipelines.TryGetValue(_config.CurrentWorkflow, out var pc))
+                return "";
+            var action = pc.PostAILogic?.Actions?.FirstOrDefault(a => a.ActionType == "search_files");
+            if (action == null) return "";
+            string folder = action.Params.TryGetValue("folder_path", out var v) ? v?.Trim() ?? "" : "";
+            if (string.IsNullOrEmpty(folder) || folder.Contains('{')) return "";
+            return folder;
         }
 
         private async Task HandleReportPageAsync(HttpListenerRequest request, HttpListenerResponse response)
@@ -1446,6 +1581,164 @@ function toggleTheme(){var b=document.body;b.classList.toggle('dark');var isDark
             await response.OutputStream.WriteAsync(buffer);
             response.Close();
         }
+
+        /// <summary>确保"文件检索"工具存在：写入默认脚本并补进工具列表（幂等）</summary>
+        public static void EnsureFileSearchTool(DreamFactoryConfig config)
+        {
+            const string toolName = "文件检索";
+            const string toolCategory = "文件检索";
+            try
+            {
+                var existing = config.AITools.FirstOrDefault(t => t.Name == toolName);
+                if (existing != null)
+                {
+                    // 迁移：给旧版已存在的文件检索工具补上分类
+                    if (string.IsNullOrEmpty(existing.Category))
+                        existing.Category = toolCategory;
+                    return;
+                }
+
+                string configDir = Path.GetDirectoryName(ConfigManager.GetConfigFilePath())
+                    ?? AppContext.BaseDirectory;
+                string toolDir = Path.Combine(configDir, "tools", "file_search");
+                Directory.CreateDirectory(toolDir);
+
+                string scriptPath = Path.Combine(toolDir, "search.ps1");
+                if (!File.Exists(scriptPath))
+                    File.WriteAllText(scriptPath, FileSearchScript, new UTF8Encoding(true));
+
+                config.AITools.Add(new AIToolItem
+                {
+                    Name = toolName,
+                    Icon = "🔍",
+                    Description =
+                        "本地文本文件检索工具。脚本: search.ps1。\n" +
+                        "参数格式: \"<目录路径>\" \"<关键词1 关键词2>\"。\n" +
+                        "用法：根据上下文中的检索目录，从用户问题中提取 2-8 个核心关键词，" +
+                        "调用脚本在目录内递归检索文本文件，输出匹配文件的路径与内容。",
+                    DirectoryPath = toolDir,
+                    Category = toolCategory
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"初始化文件检索工具失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>内嵌的默认文件检索脚本（首次运行时写入 tools/file_search/search.ps1）</summary>
+        private const string FileSearchScript = """
+                param(
+                    [string]$Folder = '',
+                    [string]$Keywords = ''
+                )
+
+                [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+                if ([string]::IsNullOrWhiteSpace($Folder)) {
+                    Write-Output 'ERROR: 未指定检索目录'
+                    exit 1
+                }
+                if (-not (Test-Path -LiteralPath $Folder -PathType Container)) {
+                    Write-Output "ERROR: 检索目录不存在: $Folder"
+                    exit 1
+                }
+
+                $TextExtensions = @(
+                    '.txt','.md','.markdown','.csv','.json','.xml','.html','.htm',
+                    '.css','.js','.ts','.py','.cs','.java','.yaml','.yml','.toml',
+                    '.ini','.cfg','.conf','.log','.sql','.sh','.bat','.ps1',
+                    '.r','.rb','.php','.swift','.kt','.lua','.pl','.rs','.go',
+                    '.c','.cpp','.h','.hpp'
+                )
+
+                $MaxFiles = 50
+                $MaxFileSize = 100 * 1024
+                $MaxTotalSize = 500 * 1024
+
+                $keywordList = @()
+                foreach ($token in ($Keywords -split '\s+')) {
+                    $t = $token.Trim()
+                    if ($t.Length -ge 2 -and $keywordList -notcontains $t) { $keywordList += $t }
+                }
+                $doFilter = $keywordList.Count -gt 0
+
+                $allFiles = Get-ChildItem -LiteralPath $Folder -File -Recurse -ErrorAction SilentlyContinue |
+                    Where-Object { $TextExtensions -contains $_.Extension.ToLowerInvariant() }
+
+                $scored = New-Object System.Collections.Generic.List[object]
+                foreach ($f in $allFiles) {
+                    try {
+                        $shortName = $f.Name
+                        $tooLarge = $f.Length -gt $MaxFileSize
+                        $content = $null
+                        $hits = 0
+                        if ($doFilter) {
+                            foreach ($kw in $keywordList) {
+                                if ($shortName.IndexOf($kw, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits += 5 }
+                            }
+                            if (-not $tooLarge) {
+                                try {
+                                    $content = [System.IO.File]::ReadAllText($f.FullName, [System.Text.Encoding]::UTF8)
+                                    foreach ($kw in $keywordList) {
+                                        $idx = 0
+                                        while (($idx = $content.IndexOf($kw, $idx, [System.StringComparison]::OrdinalIgnoreCase)) -ge 0) {
+                                            $hits += 1
+                                            $idx += $kw.Length
+                                        }
+                                    }
+                                } catch { $content = $null }
+                            }
+                            if ($hits -le 0) { continue }
+                        }
+                        $scored.Add([PSCustomObject]@{
+                            Path = $f.FullName
+                            ShortName = $shortName
+                            Length = $f.Length
+                            TooLarge = $tooLarge
+                            Content = $content
+                            Score = $hits
+                        })
+                    } catch { }
+                }
+
+                if ($doFilter) {
+                    $ordered = $scored | Sort-Object -Property Score -Descending
+                } else {
+                    $ordered = $scored
+                }
+
+                $taken = 0
+                $totalSize = 0
+                foreach ($sf in $ordered) {
+                    if ($taken -ge $MaxFiles) { break }
+                    if ($sf.TooLarge) {
+                        Write-Output "--- 文件: $($sf.Path) ---"
+                        Write-Output ("(文件过大，已跳过，大小: {0}KB)" -f [math]::Round($sf.Length / 1024))
+                        $taken++
+                        continue
+                    }
+                    if ($totalSize + $sf.Length -gt $MaxTotalSize) { break }
+                    if ($sf.Content -ne $null) {
+                        $totalSize += $sf.Length
+                        Write-Output "--- 文件: $($sf.Path) ---"
+                        Write-Output $sf.Content
+                    } else {
+                        Write-Output "--- 文件: $($sf.Path) ---"
+                        Write-Output '(读取失败)'
+                    }
+                    Write-Output ''
+                    $taken++
+                }
+
+                if ($taken -eq 0) {
+                    if ($doFilter) {
+                        Write-Output '未找到匹配的文件。'
+                    } else {
+                        Write-Output '未找到任何文本文件。'
+                    }
+                }
+                """;
 
         public void Dispose()
         {
