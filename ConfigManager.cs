@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using C99.Models;
 
 namespace C99
 {
@@ -40,6 +41,9 @@ namespace C99
 
         /// <summary>外部大模型 API Key 历史记录</summary>
         public List<string> ExternalLLMApiKeyHistory { get; set; } = new();
+
+        /// <summary>AI 杂货铺知识库配置</summary>
+        public KnowledgeBaseConfig KnowledgeBase { get; set; } = new();
     }
 
     /// <summary>

@@ -340,6 +340,295 @@
                     <StackPanel x:Name="PaginationPanel" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0" />
                 </StackPanel>
 
+                <!-- ========== 知识库特殊板块 ========== -->
+                <StackPanel x:Name="KnowledgeBaseContent" Visibility="Collapsed">
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="📚 知识库" FontSize="24" VerticalAlignment="Center"/>
+                        <Button Grid.Column="1" Content="← 返回 AI 杂货铺" FontSize="12" Height="32"
+                                Click="OnKbBackToStore"/>
+                    </Grid>
+
+                    <!-- 标签页切换 -->
+                    <TabView x:Name="KbTabView" IsAddTabButtonVisible="False" TabWidthMode="Equal"
+                             SelectionChanged="OnKbTabChanged" Margin="0,0,0,8">
+                        <!-- Tab 1：构建、整理知识库 -->
+                        <TabViewItem Header="构建、整理知识库" IsSelected="True" IsClosable="False">
+                            <ScrollViewer VerticalScrollMode="Auto" VerticalScrollBarVisibility="Auto">
+                                <StackPanel Margin="0,12,0,0" Spacing="12">
+
+                                    <!-- 向量模型选择 -->
+                                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16">
+                                        <StackPanel>
+                                            <TextBlock Text="向量模型" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                            <ComboBox x:Name="KbVectorModel" HorizontalAlignment="Stretch"
+                                                      Height="34" FontSize="13" SelectionChanged="OnKbVectorModelChanged">
+                                                <ComboBoxItem Content="自定义" Tag="custom"/>
+                                                <ComboBoxItem Content="本地启动" Tag="local"/>
+                                            </ComboBox>
+
+                                            <!-- 自定义模式：API 信息 -->
+                                            <StackPanel x:Name="KbVectorCustomPanel" Visibility="Visible" Margin="0,10,0,0">
+                                                <Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBox x:Name="KbModelApiUrl" Grid.Column="0" Height="32" FontSize="13"
+                                                             PlaceholderText="向量模型 API 地址"/>
+                                                    <TextBox x:Name="KbModelApiKey" Grid.Column="1" Height="32" FontSize="13"
+                                                             PlaceholderText="API Key"/>
+                                                </Grid>
+                                            </StackPanel>
+
+                                            <!-- 本地启动模式：llama.cpp 目录 + 模型文件 -->
+                                            <StackPanel x:Name="KbVectorLocalPanel" Visibility="Collapsed" Margin="0,10,0,0">
+                                                <TextBlock Text="llama.cpp 安装目录" FontSize="13" Margin="0,0,0,4"/>
+                                                <Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBox x:Name="KbLlamaCppDir" Grid.Column="0" Height="32" FontSize="13"
+                                                             PlaceholderText="选择 llama.cpp 安装目录"/>
+                                                    <Button Grid.Column="1" Content="浏览..." FontSize="12" Height="32"
+                                                            Click="OnKbBrowseLlamaCppDir"/>
+                                                </Grid>
+                                                <TextBlock Text="向量模型文件（.gguf）" FontSize="13" Margin="0,0,0,4"/>
+                                                <Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBox x:Name="KbLocalModelFile" Grid.Column="0" Height="32" FontSize="13"
+                                                             IsReadOnly="True" PlaceholderText="选择向量模型 .gguf 文件"/>
+                                                    <Button Grid.Column="1" Content="选择文件..." FontSize="12" Height="32"
+                                                            Click="OnKbBrowseLocalModelFile"/>
+                                                </Grid>
+                                                <TextBlock Text="本地端口" FontSize="13" Margin="0,0,0,4"/>
+                                                <TextBox x:Name="KbLocalEmbeddingPort" Grid.Column="0" Width="120" Height="32"
+                                                         FontSize="13" HorizontalAlignment="Left"/>
+                                            </StackPanel>
+
+                                            <!-- 向量维度（两种模式共用） -->
+                                            <Grid ColumnSpacing="8" Margin="0,10,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="向量维度" FontSize="13" VerticalAlignment="Center"/>
+                                                <TextBox x:Name="KbDimension" Grid.Column="1" Width="90" Height="32"
+                                                         FontSize="13" Text="1536" Margin="8,0,0,0"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- 向量数据库设置 -->
+                                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16">
+                                        <StackPanel>
+                                            <TextBlock Text="向量数据库" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+
+                                            <RadioButton x:Name="KbDbBuiltIn" Content="内置向量库（内置 DLL，无需配置）"
+                                                         GroupName="KbDbType" IsChecked="True" Checked="OnKbDbTypeChanged"/>
+                                            <RadioButton x:Name="KbDbExternal" Content="外置向量库（Milvus / pgvector）"
+                                                         GroupName="KbDbType" Checked="OnKbDbTypeChanged"/>
+
+                                            <!-- 内置配置 -->
+                                            <StackPanel x:Name="KbBuiltInPanel" Visibility="Visible" Margin="0,10,0,0">
+                                                <TextBlock Text="数据保存目录" FontSize="13" Margin="0,0,0,4"/>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBox x:Name="KbBuiltInDataDir" Grid.Column="0" Height="32" FontSize="13"
+                                                             PlaceholderText="默认：程序目录\kb_data"/>
+                                                    <Button Grid.Column="1" Content="浏览..." FontSize="12" Height="32"
+                                                            Margin="8,0,0,0" Click="OnKbBrowseDataDir"/>
+                                                </Grid>
+                                            </StackPanel>
+
+                                            <!-- 外置配置 -->
+                                            <StackPanel x:Name="KbExternalPanel" Visibility="Collapsed" Margin="0,10,0,0">
+                                                <TextBlock Text="数据库类型" FontSize="13" Margin="0,0,0,4"/>
+                                                <ComboBox x:Name="KbExternalType" Height="34" FontSize="13" Margin="0,0,0,10"
+                                                          SelectionChanged="OnKbExternalTypeChanged">
+                                                    <ComboBoxItem Content="Milvus" Tag="Milvus"/>
+                                                    <ComboBoxItem Content="pgvector (PostgreSQL)" Tag="PgVector"/>
+                                                </ComboBox>
+                                                <Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBox x:Name="KbExternalHost" Grid.Column="0" Height="32" FontSize="13"
+                                                             PlaceholderText="主机地址 (localhost)"/>
+                                                    <TextBox x:Name="KbExternalPort" Grid.Column="1" Width="90" Height="32"
+                                                             FontSize="13" PlaceholderText="端口"/>
+                                                </Grid>
+                                                <Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBox x:Name="KbExternalUser" Grid.Column="0" Height="32" FontSize="13"
+                                                             PlaceholderText="用户名"/>
+                                                    <TextBox x:Name="KbExternalPassword" Grid.Column="1" Height="32" FontSize="13"
+                                                             PlaceholderText="密码"/>
+                                                </Grid>
+                                                <TextBox x:Name="KbExternalDatabase" Height="32" FontSize="13"
+                                                         PlaceholderText="数据库名 (pgvector 必填)" Margin="0,0,0,10"/>
+                                            </StackPanel>
+
+                                            <!-- 连接操作 -->
+                                            <Grid ColumnSpacing="8" Margin="0,10,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Button Grid.Column="0" x:Name="KbConnectBtn" Content="🔌 连接"
+                                                        FontSize="13" Height="34" Click="OnKbConnect"/>
+                                                <Button Grid.Column="1" x:Name="KbDisconnectBtn" Content="断开"
+                                                        FontSize="13" Height="34" Margin="8,0,0,0" Click="OnKbDisconnect"/>
+                                                <TextBlock Grid.Column="2" x:Name="KbDbStatus" FontSize="12" Foreground="Gray"
+                                                           VerticalAlignment="Center" Margin="8,0,0,0" TextWrapping="Wrap"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- 集合管理 & 文档构建 -->
+                                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16">
+                                        <StackPanel>
+                                            <TextBlock Text="集合管理" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                            <Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ComboBox x:Name="KbCollectionSelect" Grid.Column="0" Height="34" FontSize="13"
+                                                          PlaceholderText="选择集合..." SelectionChanged="OnKbCollectionChanged"/>
+                                                <TextBox x:Name="KbNewCollectionName" Grid.Column="1" Height="34" FontSize="13"
+                                                         PlaceholderText="新建集合名称"/>
+                                                <Button Grid.Column="2" Content="新建" FontSize="12" Height="34" Width="54"
+                                                        Margin="8,0,0,0" Click="OnKbCreateCollection"/>
+                                                <Button Grid.Column="3" Content="删除" FontSize="12" Height="34" Width="54"
+                                                        Margin="8,0,0,0" Click="OnKbDropCollection"/>
+                                            </Grid>
+
+                                            <TextBlock Text="构建文档（输入文本或选择目录，对目录内文本文件建立向量索引）" FontSize="13" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="KbIngestText" Height="80" FontSize="13" TextWrapping="Wrap"
+                                                     AcceptsReturn="True" PlaceholderText="在此粘贴/输入要加入知识库的文本内容..." Margin="0,0,0,10"/>
+<Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="切分长度" FontSize="13" VerticalAlignment="Center"/>
+                                                <TextBox Grid.Column="1" x:Name="KbChunkSizeBox" Width="80" Height="32" FontSize="13"
+                                                         Text="500" Margin="8,0,0,0"/>
+                                                <Button Grid.Column="2" Content="📁 添加目录" FontSize="12" Height="34"
+                                                         Margin="8,0,0,0" Click="OnKbAddDirectory"/>
+                                                <Button Grid.Column="3" Content="⬆ 添加入库" FontSize="12" Height="34"
+                                                         Margin="8,0,0,0" Click="OnKbIngest"/>
+                                            </Grid>
+                                            <ProgressBar x:Name="KbAddDirectoryProgress" Height="12" Margin="0,0,0,10"
+                                                       Visibility="Collapsed"/>
+
+                                            <Grid Margin="0,4,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" x:Name="KbDocCount" Text="文档列表" FontSize="13"
+                                                           Foreground="Gray" VerticalAlignment="Center"/>
+                                                <Button Grid.Column="1" Content="🗑 删除选中" FontSize="12" Height="30"
+                                                        Click="OnKbDeleteDoc"/>
+                                            </Grid>
+                                            <ListView x:Name="KbDocsList" Height="180" FontSize="13" SelectionMode="Single">
+                                                <ListView.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Title}" FontSize="13" TextWrapping="Wrap"/>
+                                                            <TextBlock Text="{Binding Preview}" FontSize="11" Foreground="Gray"
+                                                                       TextWrapping="Wrap"/>
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ListView.ItemTemplate>
+                                            </ListView>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </TabViewItem>
+
+                        <!-- Tab 2：召回 -->
+                        <TabViewItem Header="召回" IsClosable="False">
+                            <ScrollViewer VerticalScrollMode="Auto" VerticalScrollBarVisibility="Auto">
+                                <StackPanel Margin="0,12,0,0" Spacing="12">
+                                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16">
+                                        <StackPanel>
+                                            <TextBlock Text="召回检索" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                            <Grid Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBox x:Name="KbQueryBox" Grid.Column="0" Height="36" FontSize="14"
+                                                         PlaceholderText="输入查询问题，检索知识库..." TextChanged="OnKbQueryChanged"/>
+                                                <Button Grid.Column="1" Content="🔍 检索" FontSize="13" Height="36" Width="80"
+                                                        Margin="8,0,0,0" Click="OnKbSearch"/>
+                                            </Grid>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="Top-K" FontSize="13" VerticalAlignment="Center"/>
+                                                <Slider Grid.Column="1" x:Name="KbTopKSlider" Width="160" Minimum="1" Maximum="50"
+                                                        Value="5" ValueChanged="OnKbTopKChanged" Margin="8,0,8,0"/>
+                                                <TextBlock Grid.Column="2" x:Name="KbTopKText" Text="5" FontSize="13"
+                                                           VerticalAlignment="Center" Width="40"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16">
+                                        <StackPanel>
+                                            <TextBlock x:Name="KbResultSummary" Text="检索结果" FontSize="14" FontWeight="SemiBold"
+                                                       Margin="0,0,0,8"/>
+                                            <ListView x:Name="KbResultsList" MinHeight="200" FontSize="13" SelectionMode="Single">
+                                                <ListView.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold"
+                                                                       TextWrapping="Wrap"/>
+                                                            <TextBlock Text="{Binding Score}" FontSize="11" Foreground="#3B82F6"/>
+                                                            <TextBlock Text="{Binding Preview}" FontSize="12" Foreground="Gray"
+                                                                       TextWrapping="Wrap"/>
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ListView.ItemTemplate>
+                                            </ListView>
+                                            <TextBlock x:Name="KbResultDetail" FontSize="12" Foreground="Gray" TextWrapping="Wrap"
+                                                       Margin="0,8,0,0" Visibility="Collapsed"/>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </TabViewItem>
+                    </TabView>
+                </StackPanel>
+
                 <!-- 设置 -->
                 <StackPanel x:Name="SettingsContent" Visibility="Collapsed">
                     <TextBlock Text="设置" FontSize="24" Margin="0,0,0,16"/>

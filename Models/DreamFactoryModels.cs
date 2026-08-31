@@ -121,7 +121,7 @@ namespace C99.Models
             new() { Name = "视频生成", Icon = "🎬" },
             new() { Name = "代码助手", Icon = "📝" },
             new() { Name = "图片处理", Icon = "🖼️" },
-            new() { Name = "知识库", Icon = "📚" },
+            new() { Name = "知识库", Icon = "📚", Category = "知识库" },
         };
     }
 

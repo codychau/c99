@@ -1,4 +1,4 @@
-using Microsoft.UI.Xaml;
+﻿using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
@@ -28,7 +28,7 @@ namespace C99
         private void Notify([CallerMemberName] string prop = "") =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(prop));
 
-        // ========== 导航 ==========
+        // ========== 瀵艰埅 ==========
         private bool _isNavExpanded = true;
         private const double ExpandedWidth = 160;
         private const double CollapsedWidth = 48;
@@ -37,22 +37,22 @@ namespace C99
         private double _animFrom, _animTo;
         private DateTime _animStart;
 
-        // ========== 运行状态 ==========
+        // ========== 杩愯鐘舵€?==========
         private Process? _runningProcess;
         private AppConfig _config = new();
 
-        // ========== 指标 & Dashboard ==========
+        // ========== 鎸囨爣 & Dashboard ==========
         private MetricsService? _metricsService;
         private DispatcherTimer? _dashboardTimer;
         private DateTime _engineStartTime;
         private bool _dashboardBuilt;
         private List<TextBlock> _dashboardValueTexts = new();
 
-        // ========== 参数自动保存（防抖） ==========
+        // ========== 鍙傛暟鑷姩淇濆瓨锛堥槻鎶栵級 ==========
         private bool _paramsDirty;
         private DispatcherTimer? _saveTimer;
 
-        // ========== 知识库板块 ==========
+        // ========== 鐭ヨ瘑搴撴澘鍧?==========
         private IVectorStore? _kbStore;
         private VectorEmbeddingService _kbEmbedding = new();
         private KnowledgeBaseConfig _kbConfig = new();
@@ -64,10 +64,10 @@ namespace C99
             this.Title = "C99";
             this.SystemBackdrop = new DesktopAcrylicBackdrop();
 
-            // 加载配置并应用到 UI
+            // 鍔犺浇閰嶇疆骞跺簲鐢ㄥ埌 UI
             LoadConfigAndApply();
 
-            // 指标服务
+            // 鎸囨爣鏈嶅姟
             _metricsService = new MetricsService();
 
             this.SizeChanged += (s, e) =>
@@ -76,7 +76,7 @@ namespace C99
                     RebuildAIToolsGrid();
             };
 
-            // 参数防抖保存定时器
+            // 鍙傛暟闃叉姈淇濆瓨瀹氭椂鍣?
             _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
             _saveTimer.Tick += (s, e) =>
             {
@@ -88,7 +88,7 @@ namespace C99
                 }
             };
 
-            // 窗口关闭时终止子进程并保存参数
+            // 绐楀彛鍏抽棴鏃剁粓姝㈠瓙杩涚▼骞朵繚瀛樺弬鏁?
             this.Closed += (s, e) =>
             {
                 _isClosing = true;
@@ -102,10 +102,9 @@ namespace C99
                 SaveDreamFactoryConfig();
                 _dreamFactoryService?.Dispose();
                 _trayHelper?.Dispose();
-                _kbEmbedding.Dispose();
             };
 
-            // 初始化 AI梦工厂
+            // 鍒濆鍖?AI姊﹀伐鍘?
             LoadDreamFactoryConfig();
             if (_dreamConfig.AutoStart)
             {
@@ -115,7 +114,7 @@ namespace C99
             ShowHome();
         }
 
-        // ==================== 导航功能 ====================
+        // ==================== 瀵艰埅鍔熻兘 ====================
 
         private void OnToggleNavClick(object sender, RoutedEventArgs e)
         {
@@ -143,7 +142,7 @@ namespace C99
         {
             var v = _isNavExpanded ? Visibility.Visible : Visibility.Collapsed;
             var p = _isNavExpanded ? new Thickness(12, 0, 12, 0) : new Thickness(0);
-            ToggleText.Text = _isNavExpanded ? " 收起" : "";
+            ToggleText.Text = _isNavExpanded ? " 鏀惰捣" : "";
             BtnHomeText.Visibility = BtnAIDreamFactoryText.Visibility = BtnAIGeneralStoreText.Visibility = v;
             BtnSettingsText.Visibility = BtnAboutText.Visibility = BtnAIBaseText.Visibility = v;
             BtnHome.Padding = BtnAIDreamFactory.Padding = BtnAIGeneralStore.Padding = p;
@@ -189,23 +188,23 @@ namespace C99
         private void OnAboutClick(object sender, RoutedEventArgs e) => ShowAbout();
         private void OnAIBaseClick(object sender, RoutedEventArgs e) => ShowAIBase();
 
-        // ==================== 配置管理 ====================
+        // ==================== 閰嶇疆绠＄悊 ====================
 
-        /// <summary>加载配置并应用到 UI 控件</summary>
+        /// <summary>鍔犺浇閰嶇疆骞跺簲鐢ㄥ埌 UI 鎺т欢</summary>
         private void LoadConfigAndApply()
         {
             try
             {
                 _config = ConfigManager.Load();
 
-                // 应用 LLM 搜索路径
+                // 搴旂敤 LLM 鎼滅储璺緞
                 if (!string.IsNullOrEmpty(_config.LLMSearchPath))
                 {
                     LLMSearchPath.Text = _config.LLMSearchPath;
                     RefreshModelSubDirs(_config.LLMSearchPath, _config.SelectedModelSubDir);
                 }
 
-                // 应用各引擎的启动器目录
+                // 搴旂敤鍚勫紩鎿庣殑鍚姩鍣ㄧ洰褰?
                 if (_config.EngineLauncherDirs.TryGetValue("llama.cpp", out var llDir))
                     LLamaLauncherDir.Text = llDir;
                 if (_config.EngineLauncherDirs.TryGetValue("vllm", out var vllDir))
@@ -215,26 +214,26 @@ namespace C99
                 if (_config.EngineLauncherDirs.TryGetValue("ollama", out var olDir))
                     OllamaLauncherDir.Text = olDir;
 
-                // 恢复所有引擎参数（滑块、文本框、下拉框等）
+                // 鎭㈠鎵€鏈夊紩鎿庡弬鏁帮紙婊戝潡銆佹枃鏈銆佷笅鎷夋绛夛級
                 LoadAllParams();
 
-                // 同步后清除脏标记
+                // 鍚屾鍚庢竻闄よ剰鏍囪
                 _paramsDirty = false;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"加载配置失败: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"鍔犺浇閰嶇疆澶辫触: {ex.Message}");
             }
         }
 
-        /// <summary>保存当前 UI 状态到配置文件</summary>
+        /// <summary>淇濆瓨褰撳墠 UI 鐘舵€佸埌閰嶇疆鏂囦欢</summary>
         private void SaveConfig()
         {
             try
             {
                 _config.LLMSearchPath = LLMSearchPath.Text.Trim();
 
-                // 保存各引擎的启动器目录
+                // 淇濆瓨鍚勫紩鎿庣殑鍚姩鍣ㄧ洰褰?
                 _config.EngineLauncherDirs["llama.cpp"] = LLamaLauncherDir.Text.Trim();
                 _config.EngineLauncherDirs["vllm"] = VLLMLauncherDir.Text.Trim();
                 _config.EngineLauncherDirs["lmstudio"] = LMStudioLauncherDir.Text.Trim();
@@ -244,11 +243,11 @@ namespace C99
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"保存配置失败: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"淇濆瓨閰嶇疆澶辫触: {ex.Message}");
             }
         }
 
-        /// <summary>保存所有引擎参数到配置</summary>
+        /// <summary>淇濆瓨鎵€鏈夊紩鎿庡弬鏁板埌閰嶇疆</summary>
         private void SaveAllParams()
         {
             try
@@ -290,18 +289,18 @@ namespace C99
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"保存参数失败: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"淇濆瓨鍙傛暟澶辫触: {ex.Message}");
             }
         }
 
-        /// <summary>标记参数已改动，启动防抖定时器自动保存</summary>
+        /// <summary>鏍囪鍙傛暟宸叉敼鍔紝鍚姩闃叉姈瀹氭椂鍣ㄨ嚜鍔ㄤ繚瀛?/summary>
         private void MarkParamsDirty()
         {
             _paramsDirty = true;
             _saveTimer?.Start();
         }
 
-        /// <summary>从配置恢复所有引擎参数</summary>
+        /// <summary>浠庨厤缃仮澶嶆墍鏈夊紩鎿庡弬鏁?/summary>
         private void LoadAllParams()
         {
             try
@@ -344,11 +343,11 @@ namespace C99
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"加载参数失败: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"鍔犺浇鍙傛暟澶辫触: {ex.Message}");
             }
         }
 
-        // ==================== 各引擎启动器目录浏览 ====================
+        // ==================== 鍚勫紩鎿庡惎鍔ㄥ櫒鐩綍娴忚 ====================
 
         private async void OnBrowseLLamaLauncherDir(object sender, RoutedEventArgs e)
         {
@@ -374,7 +373,7 @@ namespace C99
             if (folder != null) { OllamaLauncherDir.Text = folder.Path; SaveConfig(); }
         }
 
-        // ==================== 大语言模型搜索路径 ====================
+        // ==================== 澶ц瑷€妯″瀷鎼滅储璺緞 ====================
 
         private async void OnBrowseLLMSearchPath(object sender, RoutedEventArgs e)
         {
@@ -397,7 +396,7 @@ namespace C99
             SaveConfig();
         }
 
-        /// <summary>刷新模型子目录下拉列表</summary>
+        /// <summary>鍒锋柊妯″瀷瀛愮洰褰曚笅鎷夊垪琛?/summary>
         private void RefreshModelSubDirs(string rootPath, string? selectedSubDir)
         {
             try
@@ -406,15 +405,15 @@ namespace C99
 
                 if (string.IsNullOrEmpty(rootPath) || !Directory.Exists(rootPath))
                 {
-                    ModelSubDirSelector.PlaceholderText = "路径无效或无子目录";
+                    ModelSubDirSelector.PlaceholderText = "璺緞鏃犳晥鎴栨棤瀛愮洰褰?;
                     return;
                 }
 
                 var subDirs = Directory.GetDirectories(rootPath);
                 if (subDirs.Length == 0)
                 {
-                    ModelSubDirSelector.PlaceholderText = "未找到子目录";
-                    // 添加根目录本身作为选项
+                    ModelSubDirSelector.PlaceholderText = "鏈壘鍒板瓙鐩綍";
+                    // 娣诲姞鏍圭洰褰曟湰韬綔涓洪€夐」
                     ModelSubDirSelector.Items.Add(new ComboBoxItem
                     {
                         Content = Path.GetFileName(rootPath),
@@ -449,11 +448,11 @@ namespace C99
                 if (selectedIdx >= 0)
                     ModelSubDirSelector.SelectedIndex = selectedIdx;
                 else
-                    ModelSubDirSelector.PlaceholderText = $"共 {subDirs.Length} 个子目录，请选择...";
+                    ModelSubDirSelector.PlaceholderText = $"鍏?{subDirs.Length} 涓瓙鐩綍锛岃閫夋嫨...";
             }
             catch (Exception ex)
             {
-                ModelSubDirSelector.PlaceholderText = $"扫描失败: {ex.Message}";
+                ModelSubDirSelector.PlaceholderText = $"鎵弿澶辫触: {ex.Message}";
             }
         }
 
@@ -465,36 +464,36 @@ namespace C99
                 _config.SelectedModelSubDirFullPath = dirPath;
                 SaveConfig();
 
-                // 自动搜索该目录下的模型文件（.gguf）
+                // 鑷姩鎼滅储璇ョ洰褰曚笅鐨勬ā鍨嬫枃浠讹紙.gguf锛?
                 await AutoFindModelFilesAsync(dirPath);
 
-                // 检测到 mmproj 且已选中主模型 → 询问用户是否启用多模态
+                // 妫€娴嬪埌 mmproj 涓斿凡閫変腑涓绘ā鍨?鈫?璇㈤棶鐢ㄦ埛鏄惁鍚敤澶氭ā鎬?
                 if (_mmprojFilePath != null && _currentModelFilePath != null)
                 {
                     string modelName = Path.GetFileName(_currentModelFilePath);
                     string mmprojName = Path.GetFileName(_mmprojFilePath);
                     string nl = System.Environment.NewLine;
-                    string msg = "模型目录中发现多模态视觉投影文件:" + nl
+                    string msg = "妯″瀷鐩綍涓彂鐜板妯℃€佽瑙夋姇褰辨枃浠?" + nl
                         + mmprojName + nl + nl
-                        + "已选中主模型: " + modelName + nl + nl
-                        + "是否启用多模态视觉功能?" + nl
-                        + "(启用后会自动添加 --mmproj 参数)";
-                    bool? result = await ShowYesNoDialogAsync("检测到多模态投影文件", msg);
+                        + "宸查€変腑涓绘ā鍨? " + modelName + nl + nl
+                        + "鏄惁鍚敤澶氭ā鎬佽瑙夊姛鑳?" + nl
+                        + "(鍚敤鍚庝細鑷姩娣诲姞 --mmproj 鍙傛暟)";
+                    bool? result = await ShowYesNoDialogAsync("妫€娴嬪埌澶氭ā鎬佹姇褰辨枃浠?, msg);
                     _multimodalEnabled = result == true;
                 }
             }
         }
 
-        // 当前选中的模型文件路径（由统一模型目录选择器自动设定）
+        // 褰撳墠閫変腑鐨勬ā鍨嬫枃浠惰矾寰勶紙鐢辩粺涓€妯″瀷鐩綍閫夋嫨鍣ㄨ嚜鍔ㄨ瀹氾級
         private string? _currentModelFilePath;
 
-        // 多模态投影文件路径（检测到 mmproj 时设置）
+        // 澶氭ā鎬佹姇褰辨枃浠惰矾寰勶紙妫€娴嬪埌 mmproj 鏃惰缃級
         private string? _mmprojFilePath;
 
-        // 是否已启用多模态（用户确认后为 true）
+        // 鏄惁宸插惎鐢ㄥ妯℃€侊紙鐢ㄦ埛纭鍚庝负 true锛?
         private bool _multimodalEnabled;
 
-        /// <summary>在子目录的 .gguf 文件中过滤出 mmproj 文件（视觉投影），返回主模型文件列表</summary>
+        /// <summary>鍦ㄥ瓙鐩綍鐨?.gguf 鏂囦欢涓繃婊ゅ嚭 mmproj 鏂囦欢锛堣瑙夋姇褰憋級锛岃繑鍥炰富妯″瀷鏂囦欢鍒楄〃</summary>
         private string[] GetModelGgufFiles(string directory)
         {
             if (!Directory.Exists(directory)) return Array.Empty<string>();
@@ -502,18 +501,18 @@ namespace C99
             var all = Directory.GetFiles(directory, "*.gguf", SearchOption.TopDirectoryOnly);
             if (all.Length == 0) return all;
 
-            // 过滤掉 mmproj（视觉投影）文件，优先选主模型
+            // 杩囨护鎺?mmproj锛堣瑙夋姇褰憋級鏂囦欢锛屼紭鍏堥€変富妯″瀷
             var models = new System.Collections.Generic.List<string>(all.Length);
             foreach (var f in all)
             {
                 if (!Path.GetFileName(f).StartsWith("mmproj-", StringComparison.OrdinalIgnoreCase))
                     models.Add(f);
             }
-            // 如果没有非 mmproj 文件，才回退使用全部
+            // 濡傛灉娌℃湁闈?mmproj 鏂囦欢锛屾墠鍥為€€浣跨敤鍏ㄩ儴
             return models.Count > 0 ? models.ToArray() : all;
         }
 
-        /// <summary>在指定目录中自动查找 GGUF 模型文件，返回是否找到 mmproj（由调用者决定是否弹窗询问多模态）</summary>
+        /// <summary>鍦ㄦ寚瀹氱洰褰曚腑鑷姩鏌ユ壘 GGUF 妯″瀷鏂囦欢锛岃繑鍥炴槸鍚︽壘鍒?mmproj锛堢敱璋冪敤鑰呭喅瀹氭槸鍚﹀脊绐楄闂妯℃€侊級</summary>
         private Task AutoFindModelFilesAsync(string directory)
         {
             _currentModelFilePath = null;
@@ -530,10 +529,10 @@ namespace C99
                 if (modelFiles.Length == 1)
                 {
                     _currentModelFilePath = modelFiles[0];
-                    System.Diagnostics.Debug.WriteLine($"自动选中模型: {_currentModelFilePath}");
+                    System.Diagnostics.Debug.WriteLine($"鑷姩閫変腑妯″瀷: {_currentModelFilePath}");
                 }
 
-                // 检测多模态投影文件 (mmproj)，返回给调用者处理弹窗
+                // 妫€娴嬪妯℃€佹姇褰辨枃浠?(mmproj)锛岃繑鍥炵粰璋冪敤鑰呭鐞嗗脊绐?
                 foreach (var f in all)
                 {
                     if (Path.GetFileName(f).StartsWith("mmproj-", StringComparison.OrdinalIgnoreCase))
@@ -547,20 +546,20 @@ namespace C99
             {
                 _currentModelFilePath = null;
                 _mmprojFilePath = null;
-                System.Diagnostics.Debug.WriteLine($"自动查找模型文件失败: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"鑷姩鏌ユ壘妯″瀷鏂囦欢澶辫触: {ex.Message}");
             }
 
             return Task.CompletedTask;
         }
 
-        /// <summary>获取当前选中的模型文件路径（从统一模型目录中获取）</summary>
+        /// <summary>鑾峰彇褰撳墠閫変腑鐨勬ā鍨嬫枃浠惰矾寰勶紙浠庣粺涓€妯″瀷鐩綍涓幏鍙栵級</summary>
         private string? GetCurrentModelPath()
         {
-            // 如果有已选中的模型文件路径，直接返回
+            // 濡傛灉鏈夊凡閫変腑鐨勬ā鍨嬫枃浠惰矾寰勶紝鐩存帴杩斿洖
             if (!string.IsNullOrEmpty(_currentModelFilePath) && File.Exists(_currentModelFilePath))
                 return _currentModelFilePath;
 
-            // 否则从模型子目录选择器中获取（过滤 mmproj）
+            // 鍚﹀垯浠庢ā鍨嬪瓙鐩綍閫夋嫨鍣ㄤ腑鑾峰彇锛堣繃婊?mmproj锛?
             if (ModelSubDirSelector.SelectedItem is ComboBoxItem item && item.Tag is string dirPath)
             {
                 var models = GetModelGgufFiles(dirPath);
@@ -570,7 +569,7 @@ namespace C99
             return null;
         }
 
-        /// <summary>WinUI3 文件夹选择器</summary>
+        /// <summary>WinUI3 鏂囦欢澶归€夋嫨鍣?/summary>
         private async Task<Windows.Storage.StorageFolder?> PickFolderAsync()
         {
             var picker = new Windows.Storage.Pickers.FolderPicker();
@@ -580,14 +579,14 @@ namespace C99
             return await picker.PickSingleFolderAsync();
         }
 
-        // ==================== 搜索 & 杂货铺 ====================
+        // ==================== 鎼滅储 & 鏉傝揣閾?====================
 
         private async void OnSearchClick(object sender, RoutedEventArgs e)
         {
             string keyword = SearchTextBox.Text.Trim();
             if (!string.IsNullOrEmpty(keyword))
             {
-                await ShowDialogAsync("搜索", $"正在搜索: {keyword}");
+                await ShowDialogAsync("鎼滅储", $"姝ｅ湪鎼滅储: {keyword}");
             }
         }
 
@@ -595,7 +594,7 @@ namespace C99
         {
             var win = new ToolEditorWindow(tool, title, onSave, async (t, ctx) =>
             {
-                if (_dreamFactoryService == null) return "AI 梦工厂服务未启动";
+                if (_dreamFactoryService == null) return "AI 姊﹀伐鍘傛湇鍔℃湭鍚姩";
                 return await _dreamFactoryService.DebugToolAsync(t, ctx);
             });
             win.Activate();
@@ -607,8 +606,8 @@ namespace C99
             {
                 if (label == "__new__")
                 {
-                    var tool = new AIToolItem { Name = "新工具", Icon = "🛠️" };
-                    OpenToolEditor(tool, "新工具", edited =>
+                    var tool = new AIToolItem { Name = "鏂板伐鍏?, Icon = "馃洜锔? };
+                    OpenToolEditor(tool, "鏂板伐鍏?, edited =>
                     {
                         _dreamConfig.AITools.Add(edited);
                         _toolsPage = 0;
@@ -621,8 +620,8 @@ namespace C99
                 var existing = _dreamConfig.AITools.FirstOrDefault(t => t.Name == label);
                 if (existing != null)
                 {
-                    // 知识库工具进入特殊板块
-                    if (existing.Category == "知识库" || existing.Name == "知识库")
+                    // 鐭ヨ瘑搴撳伐鍏疯繘鍏ョ壒娈婃澘鍧?
+                    if (existing.Category == "鐭ヨ瘑搴? || existing.Name == "鐭ヨ瘑搴?)
                     {
                         ShowKnowledgeBase();
                         return;
@@ -673,15 +672,15 @@ namespace C99
 
             var cardDefs = new (string Icon, string Label)[]
             {
-                ("🤖", "AI调用次数"),
-                ("⚡", "Token总用量"),
-                ("💰", "API费用"),
-                ("🏭", "梦工厂调用"),
-                ("🔧", "流水线步骤"),
-                ("💵", "AI底座费用"),
-                ("⏱️", "AI底座运行"),
-                ("💹", "总费用"),
-                ("📊", "预估月费用"),
+                ("馃", "AI璋冪敤娆℃暟"),
+                ("鈿?, "Token鎬荤敤閲?),
+                ("馃挵", "API璐圭敤"),
+                ("馃彮", "姊﹀伐鍘傝皟鐢?),
+                ("馃敡", "娴佹按绾挎楠?),
+                ("馃挼", "AI搴曞骇璐圭敤"),
+                ("鈴憋笍", "AI搴曞骇杩愯"),
+                ("馃捁", "鎬昏垂鐢?),
+                ("馃搳", "棰勪及鏈堣垂鐢?),
             };
 
             int idx = 0;
@@ -724,14 +723,14 @@ namespace C99
 
             var values = new string[]
             {
-                $"{m.TotalAICalls:N0} 次",
+                $"{m.TotalAICalls:N0} 娆?,
                 $"{totalTokens:N0}",
-                $"¥ {apiCost:F2}",
-                $"{m.TotalReports:N0} 次",
-                $"{m.TotalPipelineSteps:N0} 次",
-                $"¥ {localCost:F2}",
+                $"楼 {apiCost:F2}",
+                $"{m.TotalReports:N0} 娆?,
+                $"{m.TotalPipelineSteps:N0} 娆?,
+                $"楼 {localCost:F2}",
                 FormatDuration(m.TotalEngineRunSeconds),
-                $"¥ {totalCost:F2}",
+                $"楼 {totalCost:F2}",
                 ProjectedMonthly(totalCost, m.FirstRecord),
             };
 
@@ -750,7 +749,7 @@ namespace C99
         {
             var days = Math.Max(1, (DateTime.Now - firstRecord).TotalDays);
             double monthly = totalCost / days * 30;
-            return $"¥ {monthly:F2}";
+            return $"楼 {monthly:F2}";
         }
 
         private void RebuildAIToolsGrid()
@@ -761,7 +760,7 @@ namespace C99
 
             // compute available rows based on window height
             int rows = ComputeToolRows();
-            int toolsPerPage = rows * 3 - 1; // -1 for "创建工具"
+            int toolsPerPage = rows * 3 - 1; // -1 for "鍒涘缓宸ュ叿"
 
             var items = _dreamConfig.AITools;
             int pageOffset = _toolsPage * toolsPerPage;
@@ -792,12 +791,12 @@ namespace C99
 
             var hoverColor = Microsoft.UI.ColorHelper.FromArgb(0x0C, 0x00, 0x00, 0x00);
 
-            // "创建工具" — always at row=0, col=0
+            // "鍒涘缓宸ュ叿" 鈥?always at row=0, col=0
             var newBg = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
             var newBlock = new Border { Tag = "__new__", Background = newBg, Padding = new Thickness(8) };
             var newStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
-            newStack.Children.Add(new TextBlock { Text = "＋", FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center, Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x94, 0x94, 0x94)) });
-            newStack.Children.Add(new TextBlock { Text = "创建工具", FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0), Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x94, 0x94, 0x94)) });
+            newStack.Children.Add(new TextBlock { Text = "锛?, FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center, Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x94, 0x94, 0x94)) });
+            newStack.Children.Add(new TextBlock { Text = "鍒涘缓宸ュ叿", FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0), Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x94, 0x94, 0x94)) });
             newBlock.Child = newStack;
             newBlock.Tapped += OnGridButtonClick;
             AttachHover(newBlock, newBg, hoverColor);
@@ -853,7 +852,7 @@ namespace C99
             int cur = _toolsPage;
 
             // prev
-            var prevBtn = new Button { Content = "◀", FontSize = 16, Width = 48, Margin = new Thickness(4), Tag = "prev" };
+            var prevBtn = new Button { Content = "鈼€", FontSize = 16, Width = 48, Margin = new Thickness(4), Tag = "prev" };
             prevBtn.IsEnabled = cur > 0;
             prevBtn.Click += OnPageClick;
             PaginationPanel.Children.Add(prevBtn);
@@ -896,7 +895,7 @@ namespace C99
             }
 
             // next
-            var nextBtn = new Button { Content = "▶", FontSize = 16, Width = 48, Margin = new Thickness(4), Tag = "next" };
+            var nextBtn = new Button { Content = "鈻?, FontSize = 16, Width = 48, Margin = new Thickness(4), Tag = "next" };
             nextBtn.IsEnabled = cur < totalPages - 1;
             nextBtn.Click += OnPageClick;
             PaginationPanel.Children.Add(nextBtn);
@@ -945,45 +944,41 @@ namespace C99
             }
         }
 
-        // ==================== 知识库特殊板块 ====================
+        // ==================== 鐭ヨ瘑搴撶壒娈婃澘鍧?====================
 
         private void OnKbBackToStore(object sender, RoutedEventArgs e) => ShowAIGeneralStore();
 
         private void OnKbTabChanged(object sender, SelectionChangedEventArgs e)
         {
-            // 切换到召回页时初始化集合下拉（初始化阶段 UI 未加载完成时跳过）
+            // 鍒囨崲鍒板彫鍥為〉鏃跺垵濮嬪寲闆嗗悎涓嬫媺锛堝垵濮嬪寲闃舵 UI 鏈姞杞藉畬鎴愭椂璺宠繃锛?
             if (KbTabView != null && KnowledgeBaseContent != null &&
                 KnowledgeBaseContent.Visibility == Visibility.Visible)
             {
                 var item = KbTabView.SelectedItem as TabViewItem;
-                if (item?.Header?.ToString() == "召回")
+                if (item?.Header?.ToString() == "鍙洖")
                     _ = EnsureKbStoreConnected();
             }
         }
 
-        /// <summary>确保知识库 UI/配置已初始化</summary>
+        /// <summary>纭繚鐭ヨ瘑搴?UI/閰嶇疆宸插垵濮嬪寲</summary>
         private void EnsureKnowledgeBaseLoaded()
         {
             if (_kbInitialized) return;
             _kbConfig = _config.KnowledgeBase ?? new KnowledgeBaseConfig();
 
-            // 向量模型下拉（仅保留：自定义 / 本地启动）
+            // 鍚戦噺妯″瀷涓嬫媺
             KbVectorModel.Items.Clear();
-            KbVectorModel.Items.Add(new ComboBoxItem { Content = "自定义", Tag = "custom" });
-            KbVectorModel.Items.Add(new ComboBoxItem { Content = "本地启动", Tag = "local" });
+            foreach (var preset in VectorModelPresets.GetAll())
+            {
+                KbVectorModel.Items.Add(new ComboBoxItem { Content = preset.DisplayName, Tag = preset.Id });
+            }
             SelectComboByTag(KbVectorModel, _kbConfig.VectorModel);
-            UpdateKbVectorPanels();
 
             KbModelApiUrl.Text = _kbConfig.VectorModelApiUrl;
             KbModelApiKey.Text = _kbConfig.VectorModelApiKey;
             KbDimension.Text = _kbConfig.Dimension.ToString();
 
-            // 本地启动配置
-            KbLlamaCppDir.Text = _kbConfig.LlamaCppDir;
-            KbLocalModelFile.Text = _kbConfig.LocalModelFile;
-            KbLocalEmbeddingPort.Text = _kbConfig.LocalEmbeddingPort.ToString();
-
-            // 数据库类型
+            // 鏁版嵁搴撶被鍨?
             if (_kbConfig.DbType == VectorDbType.Milvus || _kbConfig.DbType == VectorDbType.PgVector)
             {
                 KbDbExternal.IsChecked = true;
@@ -1021,36 +1016,16 @@ namespace C99
 
         private void OnKbVectorModelChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (KbVectorModel == null) return;
-            UpdateKbVectorPanels();
-        }
-
-        /// <summary>根据向量模型来源切换面板（自定义 / 本地启动）</summary>
-        private void UpdateKbVectorPanels()
-        {
-            if (KbVectorCustomPanel == null || KbVectorLocalPanel == null) return;
-            bool isLocal = (KbVectorModel.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "local";
-            KbVectorCustomPanel.Visibility = isLocal ? Visibility.Collapsed : Visibility.Visible;
-            KbVectorLocalPanel.Visibility = isLocal ? Visibility.Visible : Visibility.Collapsed;
-        }
-
-        private async void OnKbBrowseLlamaCppDir(object sender, RoutedEventArgs e)
-        {
-            var folder = await PickFolderAsync();
-            if (folder != null)
+            if (KbVectorModel?.SelectedItem is ComboBoxItem item && item.Tag is string id)
             {
-                KbLlamaCppDir.Text = folder.Path;
-                SaveKbConfig();
-            }
-        }
-
-        private async void OnKbBrowseLocalModelFile(object sender, RoutedEventArgs e)
-        {
-            var file = await PickFileAsync("选择向量模型", ".gguf");
-            if (file != null)
-            {
-                KbLocalModelFile.Text = file.Path;
-                SaveKbConfig();
+                var preset = VectorModelPresets.Find(id);
+                if (preset != null)
+                {
+                    KbDimension.Text = preset.Dimension.ToString();
+                    if (!string.IsNullOrEmpty(preset.ApiUrl) && string.IsNullOrEmpty(KbModelApiUrl.Text))
+                        KbModelApiUrl.Text = preset.ApiUrl;
+                    KbModelApiKey.IsEnabled = !string.IsNullOrEmpty(KbModelApiKey.Text) || preset.NeedKey;
+                }
             }
         }
 
@@ -1066,7 +1041,7 @@ namespace C99
         {
             bool isMilvus = KbExternalType.SelectedIndex == 0;
             KbExternalPort.Text = isMilvus ? "19530" : "5432";
-            KbExternalDatabase.PlaceholderText = isMilvus ? "数据库名 (可选)" : "数据库名 (pgvector 必填)";
+            KbExternalDatabase.PlaceholderText = isMilvus ? "鏁版嵁搴撳悕 (鍙€?" : "鏁版嵁搴撳悕 (pgvector 蹇呭～)";
         }
 
         private async void OnKbBrowseDataDir(object sender, RoutedEventArgs e)
@@ -1083,11 +1058,11 @@ namespace C99
 
             if (_kbStore.IsConnected) return true;
 
-            KbDbStatus.Text = "连接中...";
+            KbDbStatus.Text = "杩炴帴涓?..";
             try
             {
                 bool ok = await _kbStore.ConnectAsync();
-                KbDbStatus.Text = ok ? "✅ 已连接：" + _kbStore.GetConfigSummary() : "❌ 连接失败";
+                KbDbStatus.Text = ok ? "鉁?宸茶繛鎺ワ細" + _kbStore.GetConfigSummary() : "鉂?杩炴帴澶辫触";
                 if (ok)
                 {
                     await RefreshKbCollectionSelectAsync();
@@ -1098,7 +1073,7 @@ namespace C99
             }
             catch (Exception ex)
             {
-                KbDbStatus.Text = "❌ 连接失败: " + ex.Message;
+                KbDbStatus.Text = "鉂?杩炴帴澶辫触: " + ex.Message;
                 SaveKbConfig();
                 return false;
             }
@@ -1115,14 +1090,14 @@ namespace C99
                 bool ok = await EnsureKbStoreConnected();
                 if (ok)
                 {
-                    // EnsureKbStoreConnected 在“创建即已连接”时会提前返回且未刷新状态，这里统一给出反馈
-                    KbDbStatus.Text = "✅ 已连接：" + _kbStore!.GetConfigSummary();
+                    // EnsureKbStoreConnected 鍦ㄢ€滃垱寤哄嵆宸茶繛鎺モ€濇椂浼氭彁鍓嶈繑鍥炰笖鏈埛鏂扮姸鎬侊紝杩欓噷缁熶竴缁欏嚭鍙嶉
+                    KbDbStatus.Text = "鉁?宸茶繛鎺ワ細" + _kbStore!.GetConfigSummary();
                     await RefreshKbCollectionSelectAsync();
                 }
             }
             catch (Exception ex)
             {
-                KbDbStatus.Text = "❌ 连接失败: " + ex.Message;
+                KbDbStatus.Text = "鉂?杩炴帴澶辫触: " + ex.Message;
             }
             finally
             {
@@ -1134,24 +1109,20 @@ namespace C99
         {
             await (_kbStore?.DisconnectAsync() ?? Task.CompletedTask);
             _kbStore = null;
-            KbDbStatus.Text = "未连接";
+            KbDbStatus.Text = "鏈繛鎺?;
             KbCollectionSelect.Items.Clear();
             KbDocsList.Items.Clear();
-            KbDocCount.Text = "文档列表";
+            KbDocCount.Text = "鏂囨。鍒楄〃";
             SaveKbConfig();
         }
 
         private void SyncKbConfigFromUI()
         {
             _config.KnowledgeBase = _kbConfig;
-            _kbConfig.VectorModel = (KbVectorModel.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "custom";
+            _kbConfig.VectorModel = (KbVectorModel.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "text-embedding-ada-002";
             _kbConfig.VectorModelApiUrl = KbModelApiUrl.Text.Trim();
             _kbConfig.VectorModelApiKey = KbModelApiKey.Text.Trim();
             if (int.TryParse(KbDimension.Text, out var dim) && dim > 0) _kbConfig.Dimension = dim;
-            _kbConfig.LlamaCppDir = KbLlamaCppDir.Text.Trim();
-            _kbConfig.LocalModelFile = KbLocalModelFile.Text.Trim();
-            if (int.TryParse(KbLocalEmbeddingPort.Text, out var localPort) && localPort > 0 && localPort < 65536)
-                _kbConfig.LocalEmbeddingPort = localPort;
             _kbConfig.DbType = KbDbExternal.IsChecked == true
                 ? (KbExternalType.SelectedIndex == 0 ? VectorDbType.Milvus : VectorDbType.PgVector)
                 : VectorDbType.BuiltIn;
@@ -1212,7 +1183,7 @@ namespace C99
             string name = KbNewCollectionName.Text.Trim();
             if (string.IsNullOrEmpty(name))
             {
-                await ShowDialogAsync("提示", "请先输入集合名称");
+                await ShowDialogAsync("鎻愮ず", "璇峰厛杈撳叆闆嗗悎鍚嶇О");
                 return;
             }
             bool ok = await EnsureKbStoreConnected();
@@ -1222,11 +1193,11 @@ namespace C99
             {
                 SelectComboByTag(KbCollectionSelect, name);
                 await RefreshKbCollectionSelectAsync();
-                KbDbStatus.Text = $"✅ 集合 {name} 创建成功";
+                KbDbStatus.Text = $"鉁?闆嗗悎 {name} 鍒涘缓鎴愬姛";
             }
             else
             {
-                await ShowDialogAsync("错误", "创建集合失败，请检查数据库连接与配置");
+                await ShowDialogAsync("閿欒", "鍒涘缓闆嗗悎澶辫触锛岃妫€鏌ユ暟鎹簱杩炴帴涓庨厤缃?);
             }
             SaveKbConfig();
         }
@@ -1236,10 +1207,10 @@ namespace C99
             string name = GetCurrentCollectionName();
             if (string.IsNullOrEmpty(name))
             {
-                await ShowDialogAsync("提示", "请先选择要删除的集合");
+                await ShowDialogAsync("鎻愮ず", "璇峰厛閫夋嫨瑕佸垹闄ょ殑闆嗗悎");
                 return;
             }
-            bool? result = await ShowYesNoDialogAsync("删除集合", $"确定删除集合「{name}」？此操作不可恢复。");
+            bool? result = await ShowYesNoDialogAsync("鍒犻櫎闆嗗悎", $"纭畾鍒犻櫎闆嗗悎銆寋name}銆嶏紵姝ゆ搷浣滀笉鍙仮澶嶃€?);
             if (result != true) return;
             bool ok = await EnsureKbStoreConnected();
             if (!ok) return;
@@ -1247,11 +1218,11 @@ namespace C99
             await RefreshKbCollectionSelectAsync();
             KbCollectionSelect.SelectedItem = null;
             RefreshKbDocsAsync().GetAwaiter().GetResult();
-            KbDbStatus.Text = $"🗑 集合 {name} 已删除";
+            KbDbStatus.Text = $"馃棏 闆嗗悎 {name} 宸插垹闄?;
             SaveKbConfig();
         }
 
-        /// <summary>文本文件扩展名（添加目录时扫描）</summary>
+        /// <summary>鏂囨湰鏂囦欢鎵╁睍鍚嶏紙娣诲姞鐩綍鏃舵壂鎻忥級</summary>
         private static readonly HashSet<string> KbTextExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
             ".txt", ".md", ".markdown", ".csv", ".json", ".xml", ".html", ".htm",
@@ -1261,7 +1232,7 @@ namespace C99
             ".c", ".cpp", ".h", ".hpp"
         };
 
-        /// <summary>添加目录：扫描目录下所有文本文件，切分并向量化入库</summary>
+        /// <summary>娣诲姞鐩綍锛氭壂鎻忕洰褰曚笅鎵€鏈夋枃鏈枃浠讹紝鍒囧垎骞跺悜閲忓寲鍏ュ簱</summary>
         private async void OnKbAddDirectory(object sender, RoutedEventArgs e)
         {
             var folder = await PickFolderAsync();
@@ -1277,20 +1248,20 @@ namespace C99
             }
             catch (Exception ex)
             {
-                await ShowDialogAsync("扫描失败", ex.Message);
+                await ShowDialogAsync("鎵弿澶辫触", ex.Message);
                 return;
             }
 
             if (files.Count == 0)
             {
-                await ShowDialogAsync("提示", "该目录下未找到可构建索引的文本文件");
+                await ShowDialogAsync("鎻愮ず", "璇ョ洰褰曚笅鏈壘鍒板彲鏋勫缓绱㈠紩鐨勬枃鏈枃浠?);
                 return;
             }
 
             bool ok = await EnsureKbStoreConnected();
             if (!ok)
             {
-                await ShowDialogAsync("错误", "向量数据库未连接，请检查数据库配置");
+                await ShowDialogAsync("閿欒", "鍚戦噺鏁版嵁搴撴湭杩炴帴锛岃妫€鏌ユ暟鎹簱閰嶇疆");
                 return;
             }
 
@@ -1307,15 +1278,11 @@ namespace C99
             int chunkSize = int.TryParse(KbChunkSizeBox.Text, out var cs) && cs > 0 ? cs : 500;
             int totalChunks = 0;
 
-            KbAddDirectoryProgress.Visibility = Visibility.Visible;
-            KbDbStatus.Text = $"扫描到 {files.Count} 个文本文件，正在建立索引...";
+            KbDbStatus.Text = $"鎵弿鍒?{files.Count} 涓枃鏈枃浠讹紝姝ｅ湪寤虹珛绱㈠紩...";
             try
             {
-                for (int fileIndex = 0; fileIndex < files.Count; fileIndex++)
+                foreach (var file in files)
                 {
-                    var file = files[fileIndex];
-                    UpdateKbAddDirectoryProgress($"正在扫描 {fileIndex + 1}/{files.Count}：{Path.GetFileName(file)}",
-                        (double)(fileIndex + 1) / files.Count);
                     string text;
                     try
                     {
@@ -1323,7 +1290,7 @@ namespace C99
                     }
                     catch
                     {
-                        continue; // 跳过无法读取的文件（如二进制误匹配）
+                        continue; // 璺宠繃鏃犳硶璇诲彇鐨勬枃浠讹紙濡備簩杩涘埗璇尮閰嶏級
                     }
                     if (string.IsNullOrWhiteSpace(text)) continue;
 
@@ -1358,18 +1325,18 @@ namespace C99
 
                     if (!await store.AddAsync(collection, chunkModels))
                     {
-                        await ShowDialogAsync("错误", $"文件 {Path.GetFileName(file)} 入库失败");
+                        await ShowDialogAsync("閿欒", $"鏂囦欢 {Path.GetFileName(file)} 鍏ュ簱澶辫触");
                         break;
                     }
                     totalChunks += chunkModels.Count;
                 }
 
-                HideKbAddDirectoryProgress($"✅ 已扫描 {files.Count} 个文件，共入库 {totalChunks} 个片段");
+                KbDbStatus.Text = $"鉁?宸叉壂鎻?{files.Count} 涓枃浠讹紝鍏卞叆搴?{totalChunks} 涓墖娈?;
                 await RefreshKbDocsAsync(collection);
             }
             catch (Exception ex)
             {
-                HideKbAddDirectoryProgress("❌ 建立索引失败: " + ex.Message);
+                KbDbStatus.Text = "鉂?寤虹珛绱㈠紩澶辫触: " + ex.Message;
             }
             SaveKbConfig();
         }
@@ -1379,13 +1346,13 @@ namespace C99
             string text = KbIngestText.Text.Trim();
             if (string.IsNullOrEmpty(text))
             {
-                await ShowDialogAsync("提示", "请先输入要加入知识库的内容");
+                await ShowDialogAsync("鎻愮ず", "璇峰厛杈撳叆瑕佸姞鍏ョ煡璇嗗簱鐨勫唴瀹?);
                 return;
             }
             bool ok = await EnsureKbStoreConnected();
             if (!ok)
             {
-                await ShowDialogAsync("错误", "向量数据库未连接，请检查数据库配置");
+                await ShowDialogAsync("閿欒", "鍚戦噺鏁版嵁搴撴湭杩炴帴锛岃妫€鏌ユ暟鎹簱閰嶇疆");
                 return;
             }
 
@@ -1402,7 +1369,7 @@ namespace C99
             int chunkSize = int.TryParse(KbChunkSizeBox.Text, out var cs) && cs > 0 ? cs : 500;
             var chunks = SplitChunks(text, chunkSize);
 
-            KbDbStatus.Text = "向量化文档中...";
+            KbDbStatus.Text = "鍚戦噺鍖栨枃妗ｄ腑...";
             try
             {
                 var chunkModels = new List<KnowledgeChunk>();
@@ -1417,7 +1384,7 @@ namespace C99
                     chunkModels.Add(chunk);
                 }
 
-                // 尝试调用向量模型；无 API 时使用本地哈希向量兜底
+                // 灏濊瘯璋冪敤鍚戦噺妯″瀷锛涙棤 API 鏃朵娇鐢ㄦ湰鍦板搱甯屽悜閲忓厹搴?
                 for (int i = 0; i < chunkModels.Count; i++)
                 {
                     float[] vec;
@@ -1435,23 +1402,23 @@ namespace C99
                 bool added = await store.AddAsync(collection, chunkModels);
                 if (added)
                 {
-                    KbDbStatus.Text = $"✅ 已入库 {chunkModels.Count} 个片段（切分长度 {chunkSize}）";
+                    KbDbStatus.Text = $"鉁?宸插叆搴?{chunkModels.Count} 涓墖娈碉紙鍒囧垎闀垮害 {chunkSize}锛?;
                     KbIngestText.Text = "";
                     await RefreshKbDocsAsync(collection);
                 }
                 else
                 {
-                    await ShowDialogAsync("错误", "入库失败");
+                    await ShowDialogAsync("閿欒", "鍏ュ簱澶辫触");
                 }
             }
             catch (Exception ex)
             {
-                KbDbStatus.Text = "❌ 入库失败: " + ex.Message;
+                KbDbStatus.Text = "鉂?鍏ュ簱澶辫触: " + ex.Message;
             }
             SaveKbConfig();
         }
 
-        /// <summary>按长度切分文本为片段</summary>
+        /// <summary>鎸夐暱搴﹀垏鍒嗘枃鏈负鐗囨</summary>
         private static List<string> SplitChunks(string text, int chunkSize)
         {
             var result = new List<string>();
@@ -1466,7 +1433,7 @@ namespace C99
             return result;
         }
 
-        /// <summary>无向量模型 API 时的本地回退：字符哈希向量（演示用）</summary>
+        /// <summary>鏃犲悜閲忔ā鍨?API 鏃剁殑鏈湴鍥為€€锛氬瓧绗﹀搱甯屽悜閲忥紙婕旂ず鐢級</summary>
         private static float[] FallbackHashEmbedding(string text, int dim)
         {
             var vec = new float[dim];
@@ -1484,7 +1451,7 @@ namespace C99
             return vec;
         }
 
-        /// <summary>更新"添加目录"进度条</summary>
+        /// <summary>鏇存柊"娣诲姞鐩綍"杩涘害鏉?/summary>
         private void UpdateKbAddDirectoryProgress(string message, double progress)
         {
             if (KbAddDirectoryProgress != null && KbAddDirectoryProgress.Visibility == Visibility.Visible)
@@ -1497,7 +1464,7 @@ namespace C99
             }
         }
 
-        /// <summary>隐藏"添加目录"进度条</summary>
+        /// <summary>闅愯棌"娣诲姞鐩綍"杩涘害鏉?/summary>
         private void HideKbAddDirectoryProgress(string message)
         {
             DispatcherQueue.TryEnqueue(() =>
@@ -1516,7 +1483,7 @@ namespace C99
             if (_kbStore == null || !_kbStore.IsConnected)
             {
                 KbDocsList.Items.Clear();
-                KbDocCount.Text = "文档列表";
+                KbDocCount.Text = "鏂囨。鍒楄〃";
                 return;
             }
             string name = collectionName ?? GetCurrentCollectionName();
@@ -1531,25 +1498,25 @@ namespace C99
                 {
                     Id = c.Id,
                     Title = title,
-                    Preview = $"长度 {c.Content.Length} · {c.CreatedAt:yyyy-MM-dd HH:mm}"
+                    Preview = $"闀垮害 {c.Content.Length} 路 {c.CreatedAt:yyyy-MM-dd HH:mm}"
                 });
             }
             long count = await _kbStore.CountAsync(name);
-            KbDocCount.Text = $"文档列表（{count} 条 · 集合 {name}）";
+            KbDocCount.Text = $"鏂囨。鍒楄〃锛坽count} 鏉?路 闆嗗悎 {name}锛?;
         }
 
         private async void OnKbDeleteDoc(object sender, RoutedEventArgs e)
         {
             if (KbDocsList.SelectedItem == null)
             {
-                await ShowDialogAsync("提示", "请先在列表中选择要删除的文档");
+                await ShowDialogAsync("鎻愮ず", "璇峰厛鍦ㄥ垪琛ㄤ腑閫夋嫨瑕佸垹闄ょ殑鏂囨。");
                 return;
             }
             var sel = (dynamic)KbDocsList.SelectedItem;
             string id = sel.Id;
             string name = GetCurrentCollectionName();
             bool ok = await _kbStore!.DeleteAsync(name, id);
-            KbDbStatus.Text = ok ? $"✅ 已删除文档 {id}" : "❌ 删除失败";
+            KbDbStatus.Text = ok ? $"鉁?宸插垹闄ゆ枃妗?{id}" : "鉂?鍒犻櫎澶辫触";
             await RefreshKbDocsAsync(name);
             SaveKbConfig();
         }
@@ -1561,7 +1528,7 @@ namespace C99
 
         private void OnKbQueryChanged(object sender, TextChangedEventArgs e)
         {
-            // 回车时在 OnKbSearch 里处理；这里仅清空结果
+            // 鍥炶溅鏃跺湪 OnKbSearch 閲屽鐞嗭紱杩欓噷浠呮竻绌虹粨鏋?
         }
 
         private async void OnKbSearch(object sender, RoutedEventArgs e)
@@ -1569,24 +1536,24 @@ namespace C99
             string query = KbQueryBox.Text.Trim();
             if (string.IsNullOrEmpty(query))
             {
-                await ShowDialogAsync("提示", "请输入查询内容");
+                await ShowDialogAsync("鎻愮ず", "璇疯緭鍏ユ煡璇㈠唴瀹?);
                 return;
             }
             bool ok = await EnsureKbStoreConnected();
             if (!ok)
             {
-                await ShowDialogAsync("错误", "向量数据库未连接");
+                await ShowDialogAsync("閿欒", "鍚戦噺鏁版嵁搴撴湭杩炴帴");
                 return;
             }
             string collection = GetCurrentCollectionName();
             if (string.IsNullOrEmpty(collection))
             {
-                await ShowDialogAsync("提示", "请先选择集合");
+                await ShowDialogAsync("鎻愮ず", "璇峰厛閫夋嫨闆嗗悎");
                 return;
             }
 
             int topK = (int)KbTopKSlider.Value;
-            KbResultSummary.Text = "检索中...";
+            KbResultSummary.Text = "妫€绱腑...";
             var store = _kbStore!;
             try
             {
@@ -1604,7 +1571,7 @@ namespace C99
                 KbResultsList.Items.Clear();
                 if (results.Count == 0)
                 {
-                    KbResultSummary.Text = "未找到相似内容";
+                    KbResultSummary.Text = "鏈壘鍒扮浉浼煎唴瀹?;
                     return;
                 }
                 foreach (var r in results)
@@ -1613,24 +1580,24 @@ namespace C99
                     KbResultsList.Items.Add(new
                     {
                         Title = title,
-                        Score = $"相似度 {r.Score:F4}",
+                        Score = $"鐩镐技搴?{r.Score:F4}",
                         Preview = r.Content.Length > 200 ? r.Content[..200] : r.Content
                     });
                 }
-                KbResultSummary.Text = $"找到 {results.Count} 条结果（Top-{topK}）";
+                KbResultSummary.Text = $"鎵惧埌 {results.Count} 鏉＄粨鏋滐紙Top-{topK}锛?;
             }
             catch (Exception ex)
             {
-                KbResultSummary.Text = "❌ 检索失败: " + ex.Message;
+                KbResultSummary.Text = "鉂?妫€绱㈠け璐? " + ex.Message;
             }
         }
 
-        // ==================== AI底座启动集合 ====================
+        // ==================== AI搴曞骇鍚姩闆嗗悎 ====================
 
-        /// <summary>引擎切换：显示对应的参数面板</summary>
+        /// <summary>寮曟搸鍒囨崲锛氭樉绀哄搴旂殑鍙傛暟闈㈡澘</summary>
         private void OnEngineChanged(object sender, SelectionChangedEventArgs e)
         {
-            // 初始化阶段控件还未创建，跳过
+            // 鍒濆鍖栭樁娈垫帶浠惰繕鏈垱寤猴紝璺宠繃
             if (LLamaCPPParams == null) return;
 
             MarkParamsDirty();
@@ -1644,11 +1611,11 @@ namespace C99
             LMStudioParams.Visibility = engine == "lmstudio" ? Visibility.Visible : Visibility.Collapsed;
             OllamaParams.Visibility = engine == "ollama" ? Visibility.Visible : Visibility.Collapsed;
 
-            // 切换到当前引擎的预设
+            // 鍒囨崲鍒板綋鍓嶅紩鎿庣殑棰勮
             ApplyCurrentPreset();
         }
 
-        /// <summary>预设切换</summary>
+        /// <summary>棰勮鍒囨崲</summary>
         private void OnPresetChanged(object sender, RoutedEventArgs e)
         {
             if (LLamaGPULayers == null) return;
@@ -1656,19 +1623,19 @@ namespace C99
             MarkParamsDirty();
         }
 
-        /// <summary>获取当前预设名称</summary>
+        /// <summary>鑾峰彇褰撳墠棰勮鍚嶇О</summary>
         private string GetCurrentPreset()
         {
-            if (PresetRecommended.IsChecked == true) return "推荐";
-            if (PresetDefault.IsChecked == true) return "默认";
-            if (PresetExtreme.IsChecked == true) return "暴力";
-            return "推荐";
+            if (PresetRecommended.IsChecked == true) return "鎺ㄨ崘";
+            if (PresetDefault.IsChecked == true) return "榛樿";
+            if (PresetExtreme.IsChecked == true) return "鏆村姏";
+            return "鎺ㄨ崘";
         }
 
-        /// <summary>应用当前预设值到参数控件</summary>
+        /// <summary>搴旂敤褰撳墠棰勮鍊煎埌鍙傛暟鎺т欢</summary>
         private void ApplyCurrentPreset()
         {
-            // 初始化阶段控件还未创建则跳过
+            // 鍒濆鍖栭樁娈垫帶浠惰繕鏈垱寤哄垯璺宠繃
             if (LLamaGPULayers == null) return;
 
             string engine = (EngineSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "llama.cpp";
@@ -1683,12 +1650,12 @@ namespace C99
             }
         }
 
-        // ---- llama.cpp 预设 ----
+        // ---- llama.cpp 棰勮 ----
         private void ApplyLLamaPreset(string preset)
         {
             switch (preset)
             {
-                case "推荐":
+                case "鎺ㄨ崘":
                     LLamaGPULayers.Value = 35; LLamaContextSize.Value = 8192;
                     LLamaNPredict.Value = -1; LLamaThreads.Value = Environment.ProcessorCount;
                     LLamaBatchSize.Value = 2048; LLamaUBatchSize.Value = 512;
@@ -1700,7 +1667,7 @@ namespace C99
                     LLamaTopK.Text = "40"; LLamaTopP.Text = "0.95"; LLamaMinP.Text = "0.05";
                     LLamaExtraArgs.Text = "--cont-batching";
                     break;
-                case "默认":
+                case "榛樿":
                     LLamaGPULayers.Value = 0; LLamaContextSize.Value = 4096;
                     LLamaNPredict.Value = -1; LLamaThreads.Value = 4;
                     LLamaBatchSize.Value = 512; LLamaUBatchSize.Value = 512;
@@ -1712,7 +1679,7 @@ namespace C99
                     LLamaTopK.Text = "40"; LLamaTopP.Text = "0.95"; LLamaMinP.Text = "0.05";
                     LLamaExtraArgs.Text = "";
                     break;
-                case "暴力":
+                case "鏆村姏":
                     LLamaGPULayers.Value = 99; LLamaContextSize.Value = 32768;
                     LLamaNPredict.Value = -1; LLamaThreads.Value = Environment.ProcessorCount;
                     LLamaBatchSize.Value = 4096; LLamaUBatchSize.Value = 2048;
@@ -1727,22 +1694,22 @@ namespace C99
             }
         }
 
-        // ---- vllm 预设 ----
+        // ---- vllm 棰勮 ----
         private void ApplyVLLMPreset(string preset)
         {
             switch (preset)
             {
-                case "推荐":
+                case "鎺ㄨ崘":
                     VLLMTensorParallel.Value = 1; VLLMMaxLen.Value = 8192;
                     VLLMBatchSize.Value = 128; VLLMQuantization.SelectedIndex = 0;
                     VLLMExtraArgs.Text = "--enforce-eager";
                     break;
-                case "默认":
+                case "榛樿":
                     VLLMTensorParallel.Value = 1; VLLMMaxLen.Value = 4096;
                     VLLMBatchSize.Value = 32; VLLMQuantization.SelectedIndex = 0;
                     VLLMExtraArgs.Text = "";
                     break;
-                case "暴力":
+                case "鏆村姏":
                     VLLMTensorParallel.Value = Math.Min(Environment.ProcessorCount / 2, 8);
                     VLLMMaxLen.Value = 65536; VLLMBatchSize.Value = 512;
                     VLLMQuantization.SelectedIndex = 1; // awq
@@ -1751,22 +1718,22 @@ namespace C99
             }
         }
 
-        // ---- lmstudio 预设 ----
+        // ---- lmstudio 棰勮 ----
         private void ApplyLMStudioPreset(string preset)
         {
             switch (preset)
             {
-                case "推荐":
+                case "鎺ㄨ崘":
                     LMStudioGPULayers.Value = 35; LMStudioContextSize.Value = 8192;
                     LMStudioThreads.Value = Environment.ProcessorCount;
                     LMStudioExtraArgs.Text = "--mlock";
                     break;
-                case "默认":
+                case "榛樿":
                     LMStudioGPULayers.Value = 0; LMStudioContextSize.Value = 4096;
                     LMStudioThreads.Value = 4;
                     LMStudioExtraArgs.Text = "";
                     break;
-                case "暴力":
+                case "鏆村姏":
                     LMStudioGPULayers.Value = 99; LMStudioContextSize.Value = 32768;
                     LMStudioThreads.Value = Environment.ProcessorCount;
                     LMStudioExtraArgs.Text = "--mlock --no-mmap";
@@ -1774,22 +1741,22 @@ namespace C99
             }
         }
 
-        // ---- ollama 预设 ----
+        // ---- ollama 棰勮 ----
         private void ApplyOllamaPreset(string preset)
         {
             switch (preset)
             {
-                case "推荐":
+                case "鎺ㄨ崘":
                     OllamaContextSize.Value = 8192; OllamaGPULayers.Value = 35;
                     OllamaBatchSize.Value = 1024;
                     OllamaExtraArgs.Text = "--verbose";
                     break;
-                case "默认":
+                case "榛樿":
                     OllamaContextSize.Value = 4096; OllamaGPULayers.Value = 0;
                     OllamaBatchSize.Value = 512;
                     OllamaExtraArgs.Text = "";
                     break;
-                case "暴力":
+                case "鏆村姏":
                     OllamaContextSize.Value = 65536; OllamaGPULayers.Value = 99;
                     OllamaBatchSize.Value = 4096;
                     OllamaExtraArgs.Text = "--verbose --no-cache";
@@ -1797,7 +1764,7 @@ namespace C99
             }
         }
 
-        // ==================== 文件浏览（WinUI3 兼容） ====================
+        // ==================== 鏂囦欢娴忚锛圵inUI3 鍏煎锛?====================
 
         private async Task<Windows.Storage.StorageFile?> PickFileAsync(string title, string extension)
         {
@@ -1808,11 +1775,11 @@ namespace C99
             return await picker.PickSingleFileAsync();
         }
 
-        // ==================== llama.cpp 参数同步 ====================
+        // ==================== llama.cpp 鍙傛暟鍚屾 ====================
 
         private void OnLLamaValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
-            // 初始化阶段关联文本框可能还未创建
+            // 鍒濆鍖栭樁娈靛叧鑱旀枃鏈鍙兘杩樻湭鍒涘缓
             if (LLamaGPULayersText == null) return;
             if (sender is Slider sl)
             {
@@ -1866,7 +1833,7 @@ namespace C99
                 LLamaParallel.Value = v;
         }
 
-        // ==================== vllm 参数同步 ====================
+        // ==================== vllm 鍙傛暟鍚屾 ====================
 
         private void OnVLLMValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
@@ -1895,7 +1862,7 @@ namespace C99
                 VLLMBatchSize.Value = v;
         }
 
-        // ==================== LM Studio 参数同步 ====================
+        // ==================== LM Studio 鍙傛暟鍚屾 ====================
 
         private void OnLMStudioValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
@@ -1923,7 +1890,7 @@ namespace C99
                 LMStudioThreads.Value = v;
         }
 
-        // ==================== Ollama 参数同步 ====================
+        // ==================== Ollama 鍙傛暟鍚屾 ====================
 
         private void OnOllamaValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
@@ -1951,27 +1918,27 @@ namespace C99
                 OllamaBatchSize.Value = v;
         }
 
-        // ==================== 运行引擎 ====================
+        // ==================== 杩愯寮曟搸 ====================
 
         private async void OnRunEngineClick(object sender, RoutedEventArgs e)
         {
             if (_runningProcess != null && !_runningProcess.HasExited)
             {
-                await ShowDialogAsync("提示", "已有引擎在运行，请先停止再启动");
+                await ShowDialogAsync("鎻愮ず", "宸叉湁寮曟搸鍦ㄨ繍琛岋紝璇峰厛鍋滄鍐嶅惎鍔?);
                 return;
             }
 
-            // 运行前保存所有参数
+            // 杩愯鍓嶄繚瀛樻墍鏈夊弬鏁?
             _saveTimer?.Stop();
             SaveAllParams();
 
             string engine = (EngineSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "llama.cpp";
 
-            // 显示日志区域
+            // 鏄剧ず鏃ュ織鍖哄煙
             RunLogTitle.Visibility = Visibility.Visible;
             RunLog.Visibility = Visibility.Visible;
-            RunLog.Text = $"[{DateTime.Now:HH:mm:ss}] 正在准备启动 {engine}...\n";
-            RunEngineBtn.Content = "⏹ 停止";
+            RunLog.Text = $"[{DateTime.Now:HH:mm:ss}] 姝ｅ湪鍑嗗鍚姩 {engine}...\n";
+            RunEngineBtn.Content = "鈴?鍋滄";
             RunEngineBtn.Click -= OnRunEngineClick;
             RunEngineBtn.Click += OnStopEngineClick;
 
@@ -1989,7 +1956,7 @@ namespace C99
             }
             catch (Exception ex)
             {
-                AppendLog($"错误: {ex.Message}");
+                AppendLog($"閿欒: {ex.Message}");
                 ResetRunButton();
             }
         }
@@ -2001,14 +1968,14 @@ namespace C99
                 _runningProcess.Kill();
                 _runningProcess.WaitForExit(5000);
                 _runningProcess = null;
-                AppendLog("已手动停止引擎");
+                AppendLog("宸叉墜鍔ㄥ仠姝㈠紩鎿?);
             }
             ResetRunButton();
         }
 
         private void ResetRunButton()
         {
-            RunEngineBtn.Content = "▶ 运行";
+            RunEngineBtn.Content = "鈻?杩愯";
             RunEngineBtn.Click -= OnStopEngineClick;
             RunEngineBtn.Click += OnRunEngineClick;
             ModelSubDirSelector.IsEnabled = true;
@@ -2017,43 +1984,43 @@ namespace C99
         private void AppendLog(string text)
         {
             RunLog.Text += $"[{DateTime.Now:HH:mm:ss}] {text}\n";
-            RunLog.Select(RunLog.Text.Length, 0); // 滚动到底部
+            RunLog.Select(RunLog.Text.Length, 0); // 婊氬姩鍒板簳閮?
         }
 
-        // ---- llama.cpp 运行 ----
+        // ---- llama.cpp 杩愯 ----
         private async Task RunLLamaCPP()
         {
-            // 从统一模型目录获取模型路径
+            // 浠庣粺涓€妯″瀷鐩綍鑾峰彇妯″瀷璺緞
             string? modelPath = GetCurrentModelPath();
             if (string.IsNullOrEmpty(modelPath) || !File.Exists(modelPath))
             {
-                await ShowDialogAsync("错误", "请先在顶部「模型目录」中选择包含 .gguf 文件的子目录");
+                await ShowDialogAsync("閿欒", "璇峰厛鍦ㄩ《閮ㄣ€屾ā鍨嬬洰褰曘€嶄腑閫夋嫨鍖呭惈 .gguf 鏂囦欢鐨勫瓙鐩綍");
                 ResetRunButton();
                 return;
             }
 
-            // 查找 llama.cpp 可执行文件（优先使用本引擎的工作目录）
+            // 鏌ユ壘 llama.cpp 鍙墽琛屾枃浠讹紙浼樺厛浣跨敤鏈紩鎿庣殑宸ヤ綔鐩綍锛?
             string mainExe = FindLLamaExe();
             if (string.IsNullOrEmpty(mainExe))
             {
-                await ShowDialogAsync("错误", "未找到 llama.cpp 可执行文件，请设置本引擎的「启动器工作目录」");
+                await ShowDialogAsync("閿欒", "鏈壘鍒?llama.cpp 鍙墽琛屾枃浠讹紝璇疯缃湰寮曟搸鐨勩€屽惎鍔ㄥ櫒宸ヤ綔鐩綍銆?);
                 ResetRunButton();
                 return;
             }
 
             var argsList = new System.Collections.Generic.List<string>();
 
-            // ---- 模型路径 ----
+            // ---- 妯″瀷璺緞 ----
             argsList.Add($"-m \"{modelPath}\"");
 
-            // ---- 多模态投影（若用户已确认启用） ----
+            // ---- 澶氭ā鎬佹姇褰憋紙鑻ョ敤鎴峰凡纭鍚敤锛?----
             if (_multimodalEnabled && !string.IsNullOrEmpty(_mmprojFilePath) && File.Exists(_mmprojFilePath))
             {
                 argsList.Add($"--mmproj \"{_mmprojFilePath}\"");
-                AppendLog("多模态已启用，添加 --mmproj 参数");
+                AppendLog("澶氭ā鎬佸凡鍚敤锛屾坊鍔?--mmproj 鍙傛暟");
             }
 
-            // ---- 基础参数 ----
+            // ---- 鍩虹鍙傛暟 ----
             argsList.Add($"-ngl {(int)LLamaGPULayers.Value}");
             argsList.Add($"-c {(int)LLamaContextSize.Value}");
             argsList.Add($"-n {(int)LLamaNPredict.Value}");
@@ -2062,23 +2029,23 @@ namespace C99
             argsList.Add($"--ubatch-size {(int)LLamaUBatchSize.Value}");
             argsList.Add($"-np {(int)LLamaParallel.Value}");
 
-            // ---- 内存与 IO ----
+            // ---- 鍐呭瓨涓?IO ----
             if (LLamaMLock.IsChecked == true)
                 argsList.Add("--mlock");
             string mmap = (LLamaMMap.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
-            if (mmap.Contains("禁用")) argsList.Add("--no-mmap");
+            if (mmap.Contains("绂佺敤")) argsList.Add("--no-mmap");
             string fa = (LLamaFlashAttn.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "auto";
-            if (fa != "auto（默认）") argsList.Add($"--flash-attn {fa.Split('（')[0]}");
+            if (fa != "auto锛堥粯璁わ級") argsList.Add($"--flash-attn {fa.Split('锛?)[0]}");
             string numa = (LLamaNuma.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
-            if (!numa.Contains("禁用")) argsList.Add($"--numa {numa}");
-            string ctk = (LLamaCacheTypeK.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "f16（默认）";
-            if (!ctk.Contains("默认")) argsList.Add($"-ctk {ctk.Split('（')[0]}");
-            string ctv = (LLamaCacheTypeV.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "f16（默认）";
-            if (!ctv.Contains("默认")) argsList.Add($"-ctv {ctv.Split('（')[0]}");
+            if (!numa.Contains("绂佺敤")) argsList.Add($"--numa {numa}");
+            string ctk = (LLamaCacheTypeK.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "f16锛堥粯璁わ級";
+            if (!ctk.Contains("榛樿")) argsList.Add($"-ctk {ctk.Split('锛?)[0]}");
+            string ctv = (LLamaCacheTypeV.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "f16锛堥粯璁わ級";
+            if (!ctv.Contains("榛樿")) argsList.Add($"-ctv {ctv.Split('锛?)[0]}");
 
-            // ---- GPU 与设备 ----
+            // ---- GPU 涓庤澶?----
             string sm = (LLamaSplitMode.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
-            if (!sm.Contains("layer（默认")) argsList.Add($"-sm {sm.Split('（')[0]}");
+            if (!sm.Contains("layer锛堥粯璁?)) argsList.Add($"-sm {sm.Split('锛?)[0]}");
             string mg = LLamaMainGPU.Text.Trim();
             if (!string.IsNullOrEmpty(mg) && mg != "0") argsList.Add($"-mg {mg}");
             string dev = LLamaDevice.Text.Trim();
@@ -2086,7 +2053,7 @@ namespace C99
             string ts = LLamaTensorSplit.Text.Trim();
             if (!string.IsNullOrEmpty(ts)) argsList.Add($"-ts {ts}");
 
-            // ---- 采样参数 ----
+            // ---- 閲囨牱鍙傛暟 ----
             string temp = LLamaTemperature.Text.Trim();
             if (!string.IsNullOrEmpty(temp) && temp != "0.80") argsList.Add($"--temp {temp}");
             string topk = LLamaTopK.Text.Trim();
@@ -2112,19 +2079,19 @@ namespace C99
             string seed = LLamaSeed.Text.Trim();
             if (!string.IsNullOrEmpty(seed) && seed != "-1") argsList.Add($"-s {seed}");
 
-            // ---- 推测解码 ----
+            // ---- 鎺ㄦ祴瑙ｇ爜 ----
             string spec = (LLamaSpecType.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
-            if (!spec.Contains("none")) argsList.Add($"--spec-type {spec.Split('（')[0].Trim()}");
+            if (!spec.Contains("none")) argsList.Add($"--spec-type {spec.Split('锛?)[0].Trim()}");
 
-            // ---- 额外参数 ----
+            // ---- 棰濆鍙傛暟 ----
             string extra = LLamaExtraArgs.Text.Trim();
             if (!string.IsNullOrEmpty(extra)) argsList.Add(extra);
 
-            // ---- 判断启动的是 server 还是 cli ----
+            // ---- 鍒ゆ柇鍚姩鐨勬槸 server 杩樻槸 cli ----
             bool isServer = Path.GetFileName(mainExe).ToLowerInvariant().Contains("server");
             if (isServer)
             {
-                // 从控件读取 host 和 port，如果额外参数里已指定则不覆盖
+                // 浠庢帶浠惰鍙?host 鍜?port锛屽鏋滈澶栧弬鏁伴噷宸叉寚瀹氬垯涓嶈鐩?
                 string host = string.IsNullOrWhiteSpace(LLamaHost.Text) ? "127.0.0.1" : LLamaHost.Text.Trim();
                 string port = string.IsNullOrWhiteSpace(LLamaPort.Text) ? "8080" : LLamaPort.Text.Trim();
                 if (!argsList.Exists(a => a.StartsWith("--host", StringComparison.OrdinalIgnoreCase)))
@@ -2135,13 +2102,13 @@ namespace C99
 
             string args = string.Join(" ", argsList);
 
-            AppendLog($"程序: {mainExe}");
-            AppendLog($"参数: {args}");
+            AppendLog($"绋嬪簭: {mainExe}");
+            AppendLog($"鍙傛暟: {args}");
             if (isServer)
             {
                 string host = string.IsNullOrWhiteSpace(LLamaHost.Text) ? "127.0.0.1" : LLamaHost.Text.Trim();
                 string port = string.IsNullOrWhiteSpace(LLamaPort.Text) ? "8080" : LLamaPort.Text.Trim();
-                AppendLog($"🌐 浏览器访问: http://{host}:{port}");
+                AppendLog($"馃寪 娴忚鍣ㄨ闂? http://{host}:{port}");
             }
 
             await StartProcessAsync(mainExe, args);
@@ -2149,7 +2116,7 @@ namespace C99
 
         private string FindLLamaExe()
         {
-            // 1. 优先在本引擎的启动器工作目录中搜索（server 优先）
+            // 1. 浼樺厛鍦ㄦ湰寮曟搸鐨勫惎鍔ㄥ櫒宸ヤ綔鐩綍涓悳绱紙server 浼樺厛锛?
             string workDir = LLamaLauncherDir.Text.Trim();
             if (!string.IsNullOrEmpty(workDir) && Directory.Exists(workDir))
             {
@@ -2161,7 +2128,7 @@ namespace C99
                 }
             }
 
-            // 2. 常见安装路径（server 优先）
+            // 2. 甯歌瀹夎璺緞锛坰erver 浼樺厛锛?
             string[] candidates = new[]
             {
                 Path.Combine(Environment.CurrentDirectory, "llama-server.exe"),
@@ -2172,7 +2139,7 @@ namespace C99
             foreach (var c in candidates)
                 if (File.Exists(c)) return c;
 
-            // 3. 环境变量 PATH 搜索（server 优先）
+            // 3. 鐜鍙橀噺 PATH 鎼滅储锛坰erver 浼樺厛锛?
             foreach (var dir in Environment.GetEnvironmentVariable("PATH")?.Split(';') ?? Array.Empty<string>())
             {
                 var full = Path.Combine(dir.Trim(), "llama-server.exe");
@@ -2183,67 +2150,67 @@ namespace C99
             return string.Empty;
         }
 
-        // ==================== llama.cpp 环境检测 ====================
+        // ==================== llama.cpp 鐜妫€娴?====================
 
         private async void OnLLamaDetectEnv(object sender, RoutedEventArgs e)
         {
             string exe = FindLLamaExe();
             if (string.IsNullOrEmpty(exe))
             {
-                await ShowDialogAsync("错误", "未找到 llama.cpp 可执行文件，请先设置「启动器工作目录」");
+                await ShowDialogAsync("閿欒", "鏈壘鍒?llama.cpp 鍙墽琛屾枃浠讹紝璇峰厛璁剧疆銆屽惎鍔ㄥ櫒宸ヤ綔鐩綍銆?);
                 return;
             }
 
-            // 禁用按钮防重复点击
+            // 绂佺敤鎸夐挳闃查噸澶嶇偣鍑?
             LLamaDetectEnvBtn.IsEnabled = false;
-            LLamaDetectEnvBtn.Content = "⏳ 检测中...";
+            LLamaDetectEnvBtn.Content = "鈴?妫€娴嬩腑...";
 
             try
             {
                 var output = new System.Text.StringBuilder();
-                output.AppendLine("═══════════════════════════════════════");
-                output.AppendLine("  llama.cpp 环境检测报告");
-                output.AppendLine("═══════════════════════════════════════");
+                output.AppendLine("鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?);
+                output.AppendLine("  llama.cpp 鐜妫€娴嬫姤鍛?);
+                output.AppendLine("鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?);
                 output.AppendLine();
 
-                // 1. 基本信息
-                output.AppendLine($"可执行文件: {exe}");
-                output.AppendLine($"文件大小: {FormatFileSize(new FileInfo(exe).Length)}");
+                // 1. 鍩烘湰淇℃伅
+                output.AppendLine($"鍙墽琛屾枃浠? {exe}");
+                output.AppendLine($"鏂囦欢澶у皬: {FormatFileSize(new FileInfo(exe).Length)}");
                 string exeDir = Path.GetDirectoryName(exe) ?? "";
-                output.AppendLine($"所在目录: {exeDir}");
+                output.AppendLine($"鎵€鍦ㄧ洰褰? {exeDir}");
                 output.AppendLine();
 
-                // 2. 列出设备 (--list-devices)
-                output.AppendLine("── [设备列表] ──");
+                // 2. 鍒楀嚭璁惧 (--list-devices)
+                output.AppendLine("鈹€鈹€ [璁惧鍒楄〃] 鈹€鈹€");
                 string deviceOutput = await RunAndCaptureAsync(exe, "--list-devices");
-                output.AppendLine(string.IsNullOrWhiteSpace(deviceOutput) ? "(无输出)" : deviceOutput);
+                output.AppendLine(string.IsNullOrWhiteSpace(deviceOutput) ? "(鏃犺緭鍑?" : deviceOutput);
                 output.AppendLine();
 
-                // 3. 系统 GPU 环境变量
-                output.AppendLine("── [系统环境] ──");
+                // 3. 绯荤粺 GPU 鐜鍙橀噺
+                output.AppendLine("鈹€鈹€ [绯荤粺鐜] 鈹€鈹€");
                 foreach (var key in new[] { "CUDA_VISIBLE_DEVICES", "CUDA_PATH", "CUDA_HOME", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES" })
                 {
                     string? val = Environment.GetEnvironmentVariable(key);
-                    output.AppendLine($"  {key} = {val ?? "(未设置)"}");
+                    output.AppendLine($"  {key} = {val ?? "(鏈缃?"}");
                 }
-                output.AppendLine($"  PATH 含 CUDA: {(Environment.GetEnvironmentVariable("PATH")?.Contains("CUDA") == true ? "是" : "否")}");
-                output.AppendLine($"  PATH 含 ROCM: {(Environment.GetEnvironmentVariable("PATH")?.Contains("ROCm") == true ? "是" : "否")}");
+                output.AppendLine($"  PATH 鍚?CUDA: {(Environment.GetEnvironmentVariable("PATH")?.Contains("CUDA") == true ? "鏄? : "鍚?)}");
+                output.AppendLine($"  PATH 鍚?ROCM: {(Environment.GetEnvironmentVariable("PATH")?.Contains("ROCm") == true ? "鏄? : "鍚?)}");
                 output.AppendLine();
 
-                // 4. 显示版本信息 (--version)
-                output.AppendLine("── [版本信息] ──");
+                // 4. 鏄剧ず鐗堟湰淇℃伅 (--version)
+                output.AppendLine("鈹€鈹€ [鐗堟湰淇℃伅] 鈹€鈹€");
                 string versionOut = await RunAndCaptureAsync(exe, "--version");
-                output.AppendLine(string.IsNullOrWhiteSpace(versionOut) ? "(无输出)" : versionOut);
+                output.AppendLine(string.IsNullOrWhiteSpace(versionOut) ? "(鏃犺緭鍑?" : versionOut);
                 output.AppendLine();
 
-                output.AppendLine("═══════════════════════════════════════");
-                output.AppendLine("检测完成");
+                output.AppendLine("鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?);
+                output.AppendLine("妫€娴嬪畬鎴?);
 
-                // 弹出小窗展示结果
+                // 寮瑰嚭灏忕獥灞曠ず缁撴灉
                 var dialog = new ContentDialog
                 {
-                    Title = "llama.cpp 环境检测",
-                    CloseButtonText = "关闭",
+                    Title = "llama.cpp 鐜妫€娴?,
+                    CloseButtonText = "鍏抽棴",
                     XamlRoot = this.Content.XamlRoot,
                     Content = new ScrollViewer
                     {
@@ -2263,23 +2230,23 @@ namespace C99
             }
             catch (Exception ex)
             {
-                await ShowDialogAsync("检测失败", ex.Message);
+                await ShowDialogAsync("妫€娴嬪け璐?, ex.Message);
             }
             finally
             {
                 LLamaDetectEnvBtn.IsEnabled = true;
-                LLamaDetectEnvBtn.Content = "🔍 检测环境";
+                LLamaDetectEnvBtn.Content = "馃攳 妫€娴嬬幆澧?;
             }
         }
 
-        // ---- vllm 运行 ----
+        // ---- vllm 杩愯 ----
         private async Task RunVLLM()
         {
-            // 从统一模型目录获取模型路径
+            // 浠庣粺涓€妯″瀷鐩綍鑾峰彇妯″瀷璺緞
             string? modelPath = GetCurrentModelPath();
             if (string.IsNullOrEmpty(modelPath))
             {
-                await ShowDialogAsync("错误", "请先在顶部「模型目录」中选择模型子目录");
+                await ShowDialogAsync("閿欒", "璇峰厛鍦ㄩ《閮ㄣ€屾ā鍨嬬洰褰曘€嶄腑閫夋嫨妯″瀷瀛愮洰褰?);
                 ResetRunButton();
                 return;
             }
@@ -2295,29 +2262,29 @@ namespace C99
             if (quant != "none") args += $" --quantization {quant}";
             if (!string.IsNullOrEmpty(extra)) args += " " + extra;
 
-            AppendLog("启动 vLLM（需要 Python 环境）");
-            AppendLog($"命令: python -m vllm.entrypoints.openai.api_server {args}");
+            AppendLog("鍚姩 vLLM锛堥渶瑕?Python 鐜锛?);
+            AppendLog($"鍛戒护: python -m vllm.entrypoints.openai.api_server {args}");
 
             await StartProcessAsync("python", $"-m vllm.entrypoints.openai.api_server {args}");
         }
 
-        // ---- LM Studio 运行 ----
+        // ---- LM Studio 杩愯 ----
         private async Task RunLMStudio()
         {
-            // 从统一模型目录获取模型路径
+            // 浠庣粺涓€妯″瀷鐩綍鑾峰彇妯″瀷璺緞
             string? modelPath = GetCurrentModelPath();
             if (string.IsNullOrEmpty(modelPath) || !File.Exists(modelPath))
             {
-                await ShowDialogAsync("错误", "请先在顶部「模型目录」中选择包含 .gguf 文件的子目录");
+                await ShowDialogAsync("閿欒", "璇峰厛鍦ㄩ《閮ㄣ€屾ā鍨嬬洰褰曘€嶄腑閫夋嫨鍖呭惈 .gguf 鏂囦欢鐨勫瓙鐩綍");
                 ResetRunButton();
                 return;
             }
 
-            // 查找 LM Studio 安装路径（优先使用本引擎的工作目录）
+            // 鏌ユ壘 LM Studio 瀹夎璺緞锛堜紭鍏堜娇鐢ㄦ湰寮曟搸鐨勫伐浣滅洰褰曪級
             string lmStudioPath = FindLMStudioExe();
             if (string.IsNullOrEmpty(lmStudioPath))
             {
-                await ShowDialogAsync("错误", "未找到 LM Studio 可执行文件，请设置本引擎的「启动器工作目录」");
+                await ShowDialogAsync("閿欒", "鏈壘鍒?LM Studio 鍙墽琛屾枃浠讹紝璇疯缃湰寮曟搸鐨勩€屽惎鍔ㄥ櫒宸ヤ綔鐩綍銆?);
                 ResetRunButton();
                 return;
             }
@@ -2330,15 +2297,15 @@ namespace C99
             string args = $"--model \"{modelPath}\" -ngl {ngl} -c {ctx} -t {threads}";
             if (!string.IsNullOrEmpty(extra)) args += " " + extra;
 
-            AppendLog($"程序: {lmStudioPath}");
-            AppendLog($"参数: {args}");
+            AppendLog($"绋嬪簭: {lmStudioPath}");
+            AppendLog($"鍙傛暟: {args}");
 
             await StartProcessAsync(lmStudioPath, args);
         }
 
         private string FindLMStudioExe()
         {
-            // 1. 优先在本引擎的启动器工作目录中搜索
+            // 1. 浼樺厛鍦ㄦ湰寮曟搸鐨勫惎鍔ㄥ櫒宸ヤ綔鐩綍涓悳绱?
             string workDir = LMStudioLauncherDir.Text.Trim();
             if (!string.IsNullOrEmpty(workDir) && Directory.Exists(workDir))
             {
@@ -2350,7 +2317,7 @@ namespace C99
                 }
             }
 
-            // 2. 常见安装路径
+            // 2. 甯歌瀹夎璺緞
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             string[] candidates = new[]
             {
@@ -2363,17 +2330,17 @@ namespace C99
             return string.Empty;
         }
 
-        // ---- Ollama 运行 ----
+        // ---- Ollama 杩愯 ----
         private async Task RunOllama()
         {
-            // Ollama 使用模型名称而非路径，从子目录名称推断模型名
+            // Ollama 浣跨敤妯″瀷鍚嶇О鑰岄潪璺緞锛屼粠瀛愮洰褰曞悕绉版帹鏂ā鍨嬪悕
             string? modelDir = null;
             if (ModelSubDirSelector.SelectedItem is ComboBoxItem item && item.Tag is string dirPath)
                 modelDir = Path.GetFileName(dirPath);
             string model = modelDir ?? "llama2";
             if (string.IsNullOrEmpty(model))
             {
-                await ShowDialogAsync("错误", "请先在顶部「模型目录」中选择模型子目录");
+                await ShowDialogAsync("閿欒", "璇峰厛鍦ㄩ《閮ㄣ€屾ā鍨嬬洰褰曘€嶄腑閫夋嫨妯″瀷瀛愮洰褰?);
                 ResetRunButton();
                 return;
             }
@@ -2383,22 +2350,22 @@ namespace C99
             int batch = (int)OllamaBatchSize.Value;
             string extra = OllamaExtraArgs.Text.Trim();
 
-            // 先确保模型已拉取
-            AppendLog($"确保模型 {model} 已下载...");
+            // 鍏堢‘淇濇ā鍨嬪凡鎷夊彇
+            AppendLog($"纭繚妯″瀷 {model} 宸蹭笅杞?..");
             string pullArgs = $"pull {model}";
-            AppendLog($"运行: ollama {pullArgs}");
+            AppendLog($"杩愯: ollama {pullArgs}");
 
-            // 启动 ollama serve + run
+            // 鍚姩 ollama serve + run
             string runArgs = $"run {model} --num-ctx {ctx} --num-gpu-layers {ngl} --num-batch {batch}";
             if (!string.IsNullOrEmpty(extra)) runArgs += " " + extra;
 
-            AppendLog($"启动: ollama {runArgs}");
+            AppendLog($"鍚姩: ollama {runArgs}");
 
-            // Ollama 通过子进程运行
+            // Ollama 閫氳繃瀛愯繘绋嬭繍琛?
             string ollamaExe = FindOllamaExe();
             if (string.IsNullOrEmpty(ollamaExe))
             {
-                await ShowDialogAsync("错误", "未找到 ollama.exe，请确认已安装（通常位于 %LOCALAPPDATA%\\Ollama）");
+                await ShowDialogAsync("閿欒", "鏈壘鍒?ollama.exe锛岃纭宸插畨瑁咃紙閫氬父浣嶄簬 %LOCALAPPDATA%\\Ollama锛?);
                 ResetRunButton();
                 return;
             }
@@ -2408,7 +2375,7 @@ namespace C99
 
         private string FindOllamaExe()
         {
-            // 1. 优先在本引擎的启动器工作目录中搜索
+            // 1. 浼樺厛鍦ㄦ湰寮曟搸鐨勫惎鍔ㄥ櫒宸ヤ綔鐩綍涓悳绱?
             string workDir = OllamaLauncherDir.Text.Trim();
             if (!string.IsNullOrEmpty(workDir) && Directory.Exists(workDir))
             {
@@ -2416,7 +2383,7 @@ namespace C99
                 if (File.Exists(full)) return full;
             }
 
-            // 2. 常见安装路径
+            // 2. 甯歌瀹夎璺緞
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             string[] candidates = new[]
             {
@@ -2426,7 +2393,7 @@ namespace C99
             foreach (var c in candidates)
                 if (File.Exists(c)) return c;
 
-            // 3. PATH 环境变量搜索
+            // 3. PATH 鐜鍙橀噺鎼滅储
             foreach (var dir in Environment.GetEnvironmentVariable("PATH")?.Split(';') ?? Array.Empty<string>())
             {
                 var full = Path.Combine(dir.Trim(), "ollama.exe");
@@ -2435,7 +2402,7 @@ namespace C99
             return string.Empty;
         }
 
-        // ---- 通用进程启动 ----
+        // ---- 閫氱敤杩涚▼鍚姩 ----
         private async Task StartProcessAsync(string fileName, string arguments)
         {
             await Task.Run(() =>
@@ -2471,7 +2438,7 @@ namespace C99
                     process.BeginErrorReadLine();
 
                     var pid = process.Id;
-                    _ = DispatcherQueue.TryEnqueue(() => AppendLog($"进程已启动 (PID: {pid})"));
+                    _ = DispatcherQueue.TryEnqueue(() => AppendLog($"杩涚▼宸插惎鍔?(PID: {pid})"));
 
                     process.WaitForExit();
 
@@ -2481,7 +2448,7 @@ namespace C99
                     _ = DispatcherQueue.TryEnqueue(() =>
                     {
                         int exitCode = process.HasExited ? process.ExitCode : -1;
-                        AppendLog($"进程已退出 (ExitCode: {exitCode})");
+                        AppendLog($"杩涚▼宸查€€鍑?(ExitCode: {exitCode})");
                         if (_runningProcess == process)
                         {
                             _runningProcess = null;
@@ -2493,7 +2460,7 @@ namespace C99
                 {
                     _ = DispatcherQueue.TryEnqueue(() =>
                     {
-                        AppendLog($"启动失败: {ex.Message}");
+                        AppendLog($"鍚姩澶辫触: {ex.Message}");
                         _runningProcess = null;
                         ResetRunButton();
                     });
@@ -2501,9 +2468,9 @@ namespace C99
             });
         }
 
-        // ==================== 通用工具方法 ====================
+        // ==================== 閫氱敤宸ュ叿鏂规硶 ====================
 
-        /// <summary>运行命令行并捕获输出（stdout + stderr）</summary>
+        /// <summary>杩愯鍛戒护琛屽苟鎹曡幏杈撳嚭锛坰tdout + stderr锛?/summary>
         private async Task<string> RunAndCaptureAsync(string fileName, string arguments, int timeoutMs = 10000)
         {
             var tcs = new TaskCompletionSource<string>();
@@ -2530,14 +2497,14 @@ namespace C99
             if (!exited)
             {
                 try { proc.Kill(); } catch { }
-                return sb.ToString() + "\n(命令执行超时，已强制终止)";
+                return sb.ToString() + "\n(鍛戒护鎵ц瓒呮椂锛屽凡寮哄埗缁堟)";
             }
-            // 确保异步读取完成
+            // 纭繚寮傛璇诲彇瀹屾垚
             await Task.Delay(200);
             return sb.ToString();
         }
 
-        /// <summary>格式化文件大小</summary>
+        /// <summary>鏍煎紡鍖栨枃浠跺ぇ灏?/summary>
         private string FormatFileSize(long bytes)
         {
             string[] units = { "B", "KB", "MB", "GB", "TB" };
@@ -2551,7 +2518,7 @@ namespace C99
             return $"{size:F2} {units[unitIdx]}";
         }
 
-        // ==================== 通用对话框（WinUI3 兼容） ====================
+        // ==================== 閫氱敤瀵硅瘽妗嗭紙WinUI3 鍏煎锛?====================
 
         private async Task ShowDialogAsync(string title, string content)
         {
@@ -2559,21 +2526,21 @@ namespace C99
             {
                 Title = title,
                 Content = content,
-                CloseButtonText = "确定",
+                CloseButtonText = "纭畾",
                 XamlRoot = this.Content.XamlRoot
             };
             await dialog.ShowAsync();
         }
 
-        /// <summary>显示是/否对话框，返回 true=是, false=否, null=取消</summary>
+        /// <summary>鏄剧ず鏄?鍚﹀璇濇锛岃繑鍥?true=鏄? false=鍚? null=鍙栨秷</summary>
         private async Task<bool?> ShowYesNoDialogAsync(string title, string content)
         {
             var dialog = new ContentDialog
             {
                 Title = title,
                 Content = content,
-                PrimaryButtonText = "是",
-                CloseButtonText = "否",
+                PrimaryButtonText = "鏄?,
+                CloseButtonText = "鍚?,
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = this.Content.XamlRoot
             };
@@ -2581,7 +2548,7 @@ namespace C99
             return result == ContentDialogResult.Primary;
         }
 
-        // ==================== AI梦工厂 ====================
+        // ==================== AI姊﹀伐鍘?====================
 
         private AIDreamFactoryService? _dreamFactoryService;
         private TrayIconHelper? _trayHelper;
@@ -2606,7 +2573,7 @@ namespace C99
                     if (cfg != null) _dreamConfig = cfg;
                 }
             }
-            catch (Exception ex) { Debug.WriteLine($"加载AI梦工厂配置失败: {ex.Message}"); }
+            catch (Exception ex) { Debug.WriteLine($"鍔犺浇AI姊﹀伐鍘傞厤缃け璐? {ex.Message}"); }
             C99.Services.AIDreamFactoryService.EnsureFileSearchTool(_dreamConfig);
             _isLoadingDreamConfig = true;
             ApplyDreamConfigToUI();
@@ -2628,9 +2595,9 @@ namespace C99
                 var json = System.Text.Json.JsonSerializer.Serialize(_dreamConfig,
                     new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
                 System.IO.File.WriteAllText(configPath, json);
-                Debug.WriteLine($"AI梦工厂配置已保存到: {configPath}");
+                Debug.WriteLine($"AI姊﹀伐鍘傞厤缃凡淇濆瓨鍒? {configPath}");
             }
-            catch (Exception ex) { Debug.WriteLine($"保存AI梦工厂配置失败: {ex.Message}"); }
+            catch (Exception ex) { Debug.WriteLine($"淇濆瓨AI姊﹀伐鍘傞厤缃け璐? {ex.Message}"); }
         }
 
         private void ApplyDreamConfigToUI()
@@ -2669,12 +2636,12 @@ namespace C99
                 }
             }
 
-            // 自定义外部模型 → 关联设置页面的配置
+            // 鑷畾涔夊閮ㄦā鍨?鈫?鍏宠仈璁剧疆椤甸潰鐨勯厤缃?
             string extUrl = _config.ExternalLLMApiUrl;
             string extKey = _config.ExternalLLMApiKey;
             DreamFactoryCustomInfo.Text = string.IsNullOrEmpty(extUrl)
-                ? "请在「设置」页面配置 API 地址和 Key"
-                : $"API: {extUrl}  |  Key: {(string.IsNullOrEmpty(extKey) ? "(未设置)" : new string('*', Math.Min(extKey.Length, 16)))}";
+                ? "璇峰湪銆岃缃€嶉〉闈㈤厤缃?API 鍦板潃鍜?Key"
+                : $"API: {extUrl}  |  Key: {(string.IsNullOrEmpty(extKey) ? "(鏈缃?" : new string('*', Math.Min(extKey.Length, 16)))}";
 
             PopulateCustomModelCombo();
 
@@ -2698,7 +2665,7 @@ namespace C99
             DreamFactoryCustomModel.Items.Clear();
             var models = _config.ExternalLLMAvailableModels;
 
-            // 确保已保存的模型名在列表中（即使缓存为空或不在缓存中）
+            // 纭繚宸蹭繚瀛樼殑妯″瀷鍚嶅湪鍒楄〃涓紙鍗充娇缂撳瓨涓虹┖鎴栦笉鍦ㄧ紦瀛樹腑锛?
             var displayList = new List<string>(models);
             string saved = _dreamConfig.CustomModelName;
             if (!string.IsNullOrEmpty(saved) && !displayList.Contains(saved))
@@ -2713,7 +2680,7 @@ namespace C99
                     selectIdx = i;
             }
             if (selectIdx >= 0) DreamFactoryCustomModel.SelectedIndex = selectIdx;
-            DreamFactoryCustomModel.PlaceholderText = displayList.Count > 0 ? $"共 {displayList.Count} 个模型" : "请先在设置中获取模型列表...";
+            DreamFactoryCustomModel.PlaceholderText = displayList.Count > 0 ? $"鍏?{displayList.Count} 涓ā鍨? : "璇峰厛鍦ㄨ缃腑鑾峰彇妯″瀷鍒楄〃...";
         }
 
         private void UpdateDreamConfigFromUI()
@@ -2747,18 +2714,18 @@ namespace C99
         private void UpdateDreamFactoryStatusUI()
         {
             bool running = _dreamFactoryService?.IsRunning == true;
-            DreamFactoryStatus.Text = running ? "● 运行中" : "● 未启动";
+            DreamFactoryStatus.Text = running ? "鈼?杩愯涓? : "鈼?鏈惎鍔?;
             DreamFactoryStatus.Foreground = running
                 ? new SolidColorBrush(Microsoft.UI.Colors.Green)
                 : new SolidColorBrush(Microsoft.UI.Colors.Gray);
-            DreamFactoryToggleBtn.Content = running ? "⏹ 停止" : "▶ 启动";
+            DreamFactoryToggleBtn.Content = running ? "鈴?鍋滄" : "鈻?鍚姩";
             DreamFactoryPort.IsEnabled = !running;
         }
 
         private void StartDreamFactoryService()
         {
             UpdateDreamConfigFromUI();
-            // 同步外部大模型配置（从设置 → 梦工厂）
+            // 鍚屾澶栭儴澶фā鍨嬮厤缃紙浠庤缃?鈫?姊﹀伐鍘傦級
             if (_dreamConfig.ModelSource == "Custom")
             {
                 _dreamConfig.CustomApiUrl = _config.ExternalLLMApiUrl.TrimEnd('/') + "/chat/completions";
@@ -2790,7 +2757,7 @@ namespace C99
             _trayHelper.OnDoubleClick += RestoreFromTray;
             _trayHelper.OnShowRequest += RestoreFromTray;
             _trayHelper.OnExitRequest += OnTrayExit;
-            _trayHelper.Show("C99 - AI梦工厂");
+            _trayHelper.Show("C99 - AI姊﹀伐鍘?);
             var hwnd = WindowNative.GetWindowHandle(this);
             ShowWindow(hwnd, 0);
         }
@@ -2870,14 +2837,14 @@ namespace C99
                 }
 
                 if (DreamFactoryBuiltInModelFile?.Items.Count > 0)
-                    DreamFactoryBuiltInModelFile.PlaceholderText = $"共 {DreamFactoryBuiltInModelFile.Items.Count} 个模型";
+                    DreamFactoryBuiltInModelFile.PlaceholderText = $"鍏?{DreamFactoryBuiltInModelFile.Items.Count} 涓ā鍨?;
                 else if (DreamFactoryBuiltInModelFile != null)
-                    DreamFactoryBuiltInModelFile.PlaceholderText = "未找到 .gguf 模型文件";
+                    DreamFactoryBuiltInModelFile.PlaceholderText = "鏈壘鍒?.gguf 妯″瀷鏂囦欢";
             }
             catch (Exception ex)
             {
                 if (DreamFactoryBuiltInModelFile != null)
-                    DreamFactoryBuiltInModelFile.PlaceholderText = $"扫描失败: {ex.Message}";
+                    DreamFactoryBuiltInModelFile.PlaceholderText = $"鎵弿澶辫触: {ex.Message}";
             }
         }
 
@@ -2912,7 +2879,7 @@ namespace C99
                 try
                 {
                     string nl = Environment.NewLine;
-                    string header = $"{nl}=== 工作报告 [{DateTime.Now:HH:mm}] {(string.IsNullOrEmpty(account) ? "" : $"账号:{account}")} ==={nl}";
+                    string header = $"{nl}=== 宸ヤ綔鎶ュ憡 [{DateTime.Now:HH:mm}] {(string.IsNullOrEmpty(account) ? "" : $"璐﹀彿:{account}")} ==={nl}";
                     DreamFactoryLog.Text += header + summary + nl;
                     DreamFactoryNotificationText.Text = summary;
                     DreamFactoryNotification.Visibility = Visibility.Visible;
@@ -2949,9 +2916,9 @@ namespace C99
             {
                 var template = ToastNotificationManager.GetTemplateContent(ToastTemplateType.ToastText02);
                 var textNodes = template.GetElementsByTagName("text");
-                textNodes[0].AppendChild(template.CreateTextNode("工作报告已生成"));
+                textNodes[0].AppendChild(template.CreateTextNode("宸ヤ綔鎶ュ憡宸茬敓鎴?));
                 textNodes[1].AppendChild(template.CreateTextNode(
-                    string.IsNullOrEmpty(account) ? "点击打开查看" : $"账号: {account}"));
+                    string.IsNullOrEmpty(account) ? "鐐瑰嚮鎵撳紑鏌ョ湅" : $"璐﹀彿: {account}"));
 
                 var toastElement = (Windows.Data.Xml.Dom.XmlElement)template.SelectSingleNode("/toast")!;
                 toastElement.SetAttribute("launch", url);
@@ -2962,7 +2929,7 @@ namespace C99
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Toast] 通知失败: {ex.Message}");
+                Debug.WriteLine($"[Toast] 閫氱煡澶辫触: {ex.Message}");
             }
         }
 
@@ -2973,7 +2940,7 @@ namespace C99
             if (_dreamConfig.LogicPipelines.TryGetValue(_dreamConfig.CurrentWorkflow, out var plc))
             {
                 plc.PreAILogic ??= new LogicPipeline();
-                var win = new LogicDesignerWindow(plc.PreAILogic, $"{_dreamConfig.CurrentWorkflow} - 前置逻辑(Pre-AI)", pipeline =>
+                var win = new LogicDesignerWindow(plc.PreAILogic, $"{_dreamConfig.CurrentWorkflow} - 鍓嶇疆閫昏緫(Pre-AI)", pipeline =>
                 {
                     plc.PreAILogic = pipeline;
                     SaveDreamFactoryConfig();
@@ -2989,7 +2956,7 @@ namespace C99
             if (_dreamConfig.LogicPipelines.TryGetValue(_dreamConfig.CurrentWorkflow, out var plc))
             {
                 plc.PostAILogic ??= new LogicPipeline();
-                var win = new LogicDesignerWindow(plc.PostAILogic, $"{_dreamConfig.CurrentWorkflow} - 后置逻辑(Post-AI)", pipeline =>
+                var win = new LogicDesignerWindow(plc.PostAILogic, $"{_dreamConfig.CurrentWorkflow} - 鍚庣疆閫昏緫(Post-AI)", pipeline =>
                 {
                     plc.PostAILogic = pipeline;
                     SaveDreamFactoryConfig();
@@ -3057,8 +3024,8 @@ namespace C99
                     {
                         Title = title,
                         Content = message,
-                        PrimaryButtonText = "确认",
-                        CloseButtonText = "取消",
+                        PrimaryButtonText = "纭",
+                        CloseButtonText = "鍙栨秷",
                         XamlRoot = this.Content.XamlRoot
                     };
                     var result = await dialog.ShowAsync();
@@ -3069,7 +3036,7 @@ namespace C99
             return tcs.Task;
         }
 
-        // ==================== 设置：外部大模型 ====================
+        // ==================== 璁剧疆锛氬閮ㄥぇ妯″瀷 ====================
 
         private void LoadSettingsExternalLLMConfig()
         {
@@ -3090,9 +3057,9 @@ namespace C99
             foreach (var m in models)
                 SettingsExternalLLMModels.Items.Add(new ComboBoxItem { Content = m, Tag = m });
             if (models.Count > 0)
-                SettingsExternalLLMModels.PlaceholderText = $"共 {models.Count} 个模型";
+                SettingsExternalLLMModels.PlaceholderText = $"鍏?{models.Count} 涓ā鍨?;
             else
-                SettingsExternalLLMModels.PlaceholderText = "请先获取模型列表...";
+                SettingsExternalLLMModels.PlaceholderText = "璇峰厛鑾峰彇妯″瀷鍒楄〃...";
         }
 
         private void OnSettingsExternalLLMChanged(object sender, object e)
@@ -3107,7 +3074,7 @@ namespace C99
             ConfigManager.Save(_config);
         }
 
-        // ===== 历史记录按钮 =====
+        // ===== 鍘嗗彶璁板綍鎸夐挳 =====
 
         private void OnExternalLLMUrlHistoryClick(object sender, RoutedEventArgs e)
         {
@@ -3121,7 +3088,7 @@ namespace C99
                 selected => { SettingsExternalLLMKey.Text = selected; SaveExternalLLMImmediate(); });
         }
 
-        // ===== 失焦时记录历史 =====
+        // ===== 澶辩劍鏃惰褰曞巻鍙?=====
 
         private void OnExternalLLMUrlLostFocus(object sender, RoutedEventArgs e)
         {
@@ -3171,7 +3138,7 @@ namespace C99
 
                 var deleteBtn = new Button
                 {
-                    Content = "×",
+                    Content = "脳",
                     Width = 24,
                     Height = 24,
                     FontSize = 12,
@@ -3212,7 +3179,7 @@ namespace C99
             flyout.ShowAt(target);
         }
 
-        // ===== 历史记录管理 =====
+        // ===== 鍘嗗彶璁板綍绠＄悊 =====
 
         private void EnsureCurrentInHistory()
         {
@@ -3289,12 +3256,12 @@ namespace C99
             string key = SettingsExternalLLMKey.Text.Trim();
             if (string.IsNullOrEmpty(url))
             {
-                SettingsExternalLLMStatus.Text = "请先输入 API 地址";
+                SettingsExternalLLMStatus.Text = "璇峰厛杈撳叆 API 鍦板潃";
                 return;
             }
             url = url.TrimEnd('/');
             string modelsUrl = url + "/models";
-            SettingsExternalLLMStatus.Text = "正在获取模型列表...";
+            SettingsExternalLLMStatus.Text = "姝ｅ湪鑾峰彇妯″瀷鍒楄〃...";
 
             try
             {
@@ -3305,7 +3272,7 @@ namespace C99
                 var resp = await http.SendAsync(req);
                 if (!resp.IsSuccessStatusCode)
                 {
-                    SettingsExternalLLMStatus.Text = $"请求失败: HTTP {(int)resp.StatusCode}";
+                    SettingsExternalLLMStatus.Text = $"璇锋眰澶辫触: HTTP {(int)resp.StatusCode}";
                     return;
                 }
                 var body = await resp.Content.ReadAsStringAsync();
@@ -3326,11 +3293,11 @@ namespace C99
                 ConfigManager.Save(_config);
                 PopulateSettingsModelCombo();
                 PopulateCustomModelCombo();
-                SettingsExternalLLMStatus.Text = $"获取成功，共 {modelList.Count} 个模型";
+                SettingsExternalLLMStatus.Text = $"鑾峰彇鎴愬姛锛屽叡 {modelList.Count} 涓ā鍨?;
             }
             catch (Exception ex)
             {
-                SettingsExternalLLMStatus.Text = $"获取失败: {ex.Message}";
+                SettingsExternalLLMStatus.Text = $"鑾峰彇澶辫触: {ex.Message}";
             }
         }
 
@@ -3340,7 +3307,7 @@ namespace C99
             string key = SettingsExternalLLMKey.Text.Trim();
             if (string.IsNullOrEmpty(url))
             {
-                SettingsExternalLLMStatus.Text = "请先输入 API 地址";
+                SettingsExternalLLMStatus.Text = "璇峰厛杈撳叆 API 鍦板潃";
                 return;
             }
             url = url.TrimEnd('/');
@@ -3354,12 +3321,12 @@ namespace C99
                     selectedModel = _config.ExternalLLMAvailableModels[0];
                 else
                 {
-                    SettingsExternalLLMStatus.Text = "请先获取模型列表并选择模型";
+                    SettingsExternalLLMStatus.Text = "璇峰厛鑾峰彇妯″瀷鍒楄〃骞堕€夋嫨妯″瀷";
                     return;
                 }
             }
 
-            SettingsExternalLLMStatus.Text = "正在检测...";
+            SettingsExternalLLMStatus.Text = "姝ｅ湪妫€娴?..";
 
             try
             {
@@ -3376,13 +3343,13 @@ namespace C99
                     req.Headers.Add("Authorization", $"Bearer {key}");
                 var resp = await http.SendAsync(req);
                 if (resp.IsSuccessStatusCode)
-                    SettingsExternalLLMStatus.Text = "检测通过，接口可用";
+                    SettingsExternalLLMStatus.Text = "妫€娴嬮€氳繃锛屾帴鍙ｅ彲鐢?;
                 else
-                    SettingsExternalLLMStatus.Text = $"检测失败: HTTP {(int)resp.StatusCode}";
+                    SettingsExternalLLMStatus.Text = $"妫€娴嬪け璐? HTTP {(int)resp.StatusCode}";
             }
             catch (Exception ex)
             {
-                SettingsExternalLLMStatus.Text = $"检测失败: {ex.Message}";
+                SettingsExternalLLMStatus.Text = $"妫€娴嬪け璐? {ex.Message}";
             }
         }
 
@@ -3391,9 +3358,9 @@ namespace C99
             _config.ExternalLLMAvailableModels.Clear();
             ConfigManager.Save(_config);
             SettingsExternalLLMModels.Items.Clear();
-            SettingsExternalLLMModels.PlaceholderText = "请先获取模型列表...";
-            SettingsExternalLLMStatus.Text = "缓存已清空";
-            if (DreamFactoryCustomModel != null) { DreamFactoryCustomModel.Items.Clear(); DreamFactoryCustomModel.PlaceholderText = "请先在设置中获取模型列表..."; }
+            SettingsExternalLLMModels.PlaceholderText = "璇峰厛鑾峰彇妯″瀷鍒楄〃...";
+            SettingsExternalLLMStatus.Text = "缂撳瓨宸叉竻绌?;
+            if (DreamFactoryCustomModel != null) { DreamFactoryCustomModel.Items.Clear(); DreamFactoryCustomModel.PlaceholderText = "璇峰厛鍦ㄨ缃腑鑾峰彇妯″瀷鍒楄〃..."; }
         }
     }
 }
