@@ -145,6 +145,26 @@ namespace C99.Services
             return RunNativeAsync(() => _native!.GetAll(collectionName));
         }
 
+        public async Task<string> GetSourceFileAsync(string collectionName, string docId)
+        {
+            EnsureNative();
+            var all = await RunNativeAsync(() => _native!.GetAll(collectionName));
+            var chunk = all.FirstOrDefault(c => c.Id == docId);
+            if (chunk != null && chunk.Metadata.TryGetValue("path", out var path))
+            {
+                return Path.GetFileName(path);
+            }
+            return "";
+        }
+
+        public async Task<string> GetContentAsync(string collectionName, string docId)
+        {
+            EnsureNative();
+            var all = await RunNativeAsync(() => _native!.GetAll(collectionName));
+            var chunk = all.FirstOrDefault(c => c.Id == docId);
+            return chunk?.Content ?? "";
+        }
+
         /// <summary>本地哈希向量兜底（无 API 时）</summary>
         private static float[] FallbackHashEmbedding(string text, int dim)
         {

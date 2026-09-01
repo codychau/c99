@@ -102,5 +102,11 @@ namespace C99.Models
 
         /// <summary>创建时间</summary>
         public DateTime CreatedAt { get; set; } = DateTime.Now;
+
+        /// <summary>源文件路径</summary>
+        public string SourceFile { get; set; } = "";
+
+        /// <summary>在源文件中的切片索引</summary>
+        public int ChunkIndex { get; set; } = 0;
     }
 }

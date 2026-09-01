@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace C99.Services
@@ -169,12 +170,91 @@ namespace C99.Services
             }
         }
 
-        /// <summary>批量文本转向量</summary>
-        public async Task<List<float[]>> EmbedBatchAsync(List<string> texts, KnowledgeBaseConfig config)
+        /// <summary>批量文本转向量：一次请求传入多条文本，减少网络往返。</summary>
+        public async Task<List<float[]>> EmbedBatchAsync(List<string> texts, KnowledgeBaseConfig config, CancellationToken ct = default)
         {
-            var result = new List<float[]>();
-            foreach (var t in texts)
-                result.Add(await EmbedAsync(t, config));
+            if (texts.Count == 0) return new List<float[]>();
+            if (config.VectorModel == "local")
+                return await EmbedLocalBatchAsync(texts, config, ct);
+            return await EmbedRemoteBatchAsync(texts, config, ct);
+        }
+
+        /// <summary>远程 API 批量向量化（`input` 传数组，按 data[i] 取回）</summary>
+        private async Task<List<float[]>> EmbedRemoteBatchAsync(List<string> texts, KnowledgeBaseConfig config, CancellationToken ct)
+        {
+            string url = !string.IsNullOrEmpty(config.VectorModelApiUrl)
+                ? config.VectorModelApiUrl
+                : "http://localhost:8000/v1/embeddings";
+            string key = config.VectorModelApiKey;
+
+            var request = new { model = "text-embedding", input = texts };
+            var json = JsonSerializer.Serialize(request);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+            if (!string.IsNullOrEmpty(key))
+                req.Headers.Add("Authorization", $"Bearer {key}");
+
+            var resp = await _http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var errBody = await resp.Content.ReadAsStringAsync();
+                throw new Exception($"向量模型调用失败: HTTP {(int)resp.StatusCode} {errBody}");
+            }
+            var body = await resp.Content.ReadAsStringAsync();
+            return ParseEmbeddings(body, texts.Count);
+        }
+
+        /// <summary>本地 llama-server 批量向量化（一次请求传多条）</summary>
+        private async Task<List<float[]>> EmbedLocalBatchAsync(List<string> texts, KnowledgeBaseConfig config, CancellationToken ct)
+        {
+            EnsureLocalServerStarted(config);
+            await WaitLocalServerReadyAsync(config);
+            string url = $"http://127.0.0.1:{config.LocalEmbeddingPort}/v1/embeddings";
+            string modelId = Path.GetFileNameWithoutExtension(config.LocalModelFile);
+
+            var request = new { model = modelId, input = texts };
+            var json = JsonSerializer.Serialize(request);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+
+            var resp = await _http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var errBody = await resp.Content.ReadAsStringAsync();
+                throw new Exception($"本地向量模型调用失败: HTTP {(int)resp.StatusCode} {errBody}");
+            }
+            var body = await resp.Content.ReadAsStringAsync();
+            var result = ParseEmbeddings(body, texts.Count);
+            // 以服务实际维度为准
+            if (result.Count > 0 && result[0].Length > 0)
+                config.Dimension = result[0].Length;
+            return result;
+        }
+
+        /// <summary>解析 /embeddings 响应（data 数组，按 index 对齐输入顺序）</summary>
+        private static List<float[]> ParseEmbeddings(string body, int expectedCount)
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
+                throw new Exception("向量模型返回为空");
+
+            var byIndex = new Dictionary<int, float[]>();
+            foreach (var item in data.EnumerateArray())
+            {
+                int idx = byIndex.Count;
+                if (item.TryGetProperty("index", out var idxEl) && idxEl.TryGetInt32(out int parsedIdx))
+                    idx = parsedIdx;
+                var emb = item.GetProperty("embedding");
+                var list = new List<float>();
+                foreach (var v in emb.EnumerateArray())
+                    list.Add(v.GetSingle());
+                byIndex[idx] = list.ToArray();
+            }
+
+            var result = new List<float[]>(expectedCount);
+            for (int i = 0; i < expectedCount; i++)
+                result.Add(byIndex.TryGetValue(i, out var v) ? v : Array.Empty<float>());
             return result;
         }
 

@@ -12,6 +12,7 @@ using System.IO;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
@@ -58,6 +59,10 @@ namespace C99
         private KnowledgeBaseConfig _kbConfig = new();
         private bool _kbInitialized;
         private bool _kbAddDirectoryBusy;
+        private string? _currentDocId;
+        private List<KnowledgeChunk> _kbAllChunks = new();
+        private CancellationTokenSource? _kbScanCts;
+        private CancellationTokenSource? _kbSkipFileCts;
 
         public MainWindow()
         {
@@ -1301,8 +1306,12 @@ namespace C99
             // 进入后台线程执行扫描/切分/向量化/入库
             KbAddDirectoryProgress.Visibility = Visibility.Visible;
             KbAddDirectoryProgress.Value = 0;
+            KbSkipFileBtn.Visibility = Visibility.Visible;
+            KbCancelScanBtn.Visibility = Visibility.Visible;
             KbDbStatus.Text = "正在扫描目录...";
             _kbAddDirectoryBusy = true;
+            using var scanCts = new CancellationTokenSource();
+            _kbScanCts = scanCts;
             try
             {
                 var result = await Task.Run(async () =>
@@ -1341,15 +1350,34 @@ namespace C99
                         return new KbAddDirectoryResult(0, 0, skippedFiles);
                     }
 
+                    // 按文件大小估算工作量权重（大文件占更大进度段，视觉更平滑；分类失败按 1 兜底）
+                    var fileWeights = new long[files.Count];
+                    long totalWeight = 0;
+                    for (int i = 0; i < files.Count; i++)
+                    {
+                        try { fileWeights[i] = new FileInfo(files[i]).Length; }
+                        catch { fileWeights[i] = 1; }
+                        if (fileWeights[i] < 1) fileWeights[i] = 1;
+                        totalWeight += fileWeights[i];
+                    }
+                    long doneWeight = 0;
+
                     for (int fileIndex = 0; fileIndex < files.Count; fileIndex++)
                     {
+                        scanCts.Token.ThrowIfCancellationRequested();
+
                         var file = files[fileIndex];
                         string fileName = Path.GetFileName(file);
-                        double progress = (double)(fileIndex + 1) / files.Count;
+                        double baseProgress = (double)doneWeight / totalWeight;
+                        int shownIndex = fileIndex + 1;
+                        int shownCount = files.Count;
+                        string shownFile = fileName;
+                        int shownSkipped = skippedFiles;
+                        double shownBase = baseProgress;
                         DispatcherQueue.TryEnqueue(() =>
                         {
-                            KbAddDirectoryProgress.Value = progress;
-                            KbDbStatus.Text = $"正在扫描 {fileIndex + 1}/{files.Count}：{fileName}（已跳过 {skippedFiles} 个）";
+                            KbAddDirectoryProgress.Value = shownBase;
+                            KbDbStatus.Text = $"正在扫描 {shownIndex}/{shownCount}：{shownFile}（已跳过 {shownSkipped} 个）";
                         });
 
                         string text;
@@ -1357,6 +1385,7 @@ namespace C99
                         catch { continue; } // 跳过无法读取的文件（如二进制误匹配）
                         if (string.IsNullOrWhiteSpace(text)) continue;
 
+                        var sw = Stopwatch.StartNew();
                         var chunkModels = new List<KnowledgeChunk>();
                         foreach (var c in SplitChunks(text, chunkSize))
                         {
@@ -1373,26 +1402,86 @@ namespace C99
                             });
                         }
 
-                        for (int i = 0; i < chunkModels.Count; i++)
+                        // 本文件的「跳过当前文件」令牌（取消它只影响本文件）
+                        using var skipFileCts = CancellationTokenSource.CreateLinkedTokenSource(scanCts.Token);
+                        _kbSkipFileCts = skipFileCts;
+                        bool skipThisFile = false;
+
+                        // 分批向量化：一次请求含多条，大幅减少 HTTP 往返
+                        const int embedBatchSize = 32;
+                        int embedded = 0;
+                        int chunkCount = chunkModels.Count;
+                        double fileWeightRatio = (double)fileWeights[fileIndex] / totalWeight;
+                        while (embedded < chunkCount)
                         {
-                            float[] vec;
+                            if (skipFileCts.IsCancellationRequested)
+                            {
+                                skipThisFile = true;
+                                break;
+                            }
+                            scanCts.Token.ThrowIfCancellationRequested();
+
+                            int take = Math.Min(embedBatchSize, chunkCount - embedded);
+                            var batch = new List<string>(take);
+                            for (int i = 0; i < take; i++)
+                                batch.Add(chunkModels[embedded + i].Content);
+
+                            List<float[]>? vecs;
                             try
                             {
-                                vec = await _kbEmbedding.EmbedAsync(chunkModels[i].Content, _kbConfig);
+                                vecs = await _kbEmbedding.EmbedBatchAsync(batch, _kbConfig, scanCts.Token);
                             }
+                            catch (OperationCanceledException) { throw; }
                             catch
                             {
-                                vec = FallbackHashEmbedding(chunkModels[i].Content, _kbConfig.Dimension);
+                                // 批调用失败时降级为逐条向量化（单条仍失败则用本地哈希向量兜底）
+                                vecs = new List<float[]>(take);
+                                for (int i = 0; i < take; i++)
+                                {
+                                    float[] v;
+                                    try { v = await _kbEmbedding.EmbedAsync(batch[i], _kbConfig); }
+                                    catch { v = FallbackHashEmbedding(batch[i], _kbConfig.Dimension); }
+                                    vecs.Add(v);
+                                }
                             }
-                            chunkModels[i].Embedding = vec;
+
+                            for (int i = 0; i < take && i < vecs.Count; i++)
+                            {
+                                var v = vecs[i];
+                                chunkModels[embedded + i].Embedding = (v == null || v.Length == 0)
+                                    ? FallbackHashEmbedding(batch[i], _kbConfig.Dimension)
+                                    : v;
+                            }
+                            embedded += take;
+
+                            double shownProgress = baseProgress + (double)embedded / chunkCount * fileWeightRatio;
+                            int shownEmbedded = embedded;
+                            DispatcherQueue.TryEnqueue(() =>
+                            {
+                                KbAddDirectoryProgress.Value = shownProgress;
+                                KbDbStatus.Text = $"正在向量化 {shownIndex}/{shownCount}：{shownFile}（切块 {shownEmbedded}/{chunkCount}）";
+                            });
+                        }
+
+                        _kbSkipFileCts = null;
+                        if (skipThisFile)
+                        {
+                            skippedFiles++;
+                            doneWeight += fileWeights[fileIndex];
+                            DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = $"已跳过文件 {fileName}");
+                            continue;
                         }
 
                         if (!await store.AddAsync(collection, chunkModels))
                         {
                             DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = $"⚠ 文件 {fileName} 入库失败，已跳过");
+                            doneWeight += fileWeights[fileIndex];
                             continue;
                         }
-                        totalChunks += chunkModels.Count;
+                        sw.Stop();
+                        Debug.WriteLine($"[KB] 文件 {fileName}：{text.Length / 1024.0:F1}KB / {chunkCount} 切块，向量化耗时 {sw.Elapsed.TotalSeconds:F1}s");
+                        doneWeight += fileWeights[fileIndex];
+                        totalChunks += chunkCount;
                         totalFiles++;
                     }
                     return new KbAddDirectoryResult(totalFiles, totalChunks, skippedFiles);
@@ -1404,16 +1493,21 @@ namespace C99
                     {
                         HideKbAddDirectoryProgress(result.Skipped == 0
                             ? "📂 未新增文档"
-                            : $"📂 无新增文档（已入库 {result.Skipped} 个文件自动跳过）");
+                            : $"📂 无新增文档（已处理 {result.Skipped} 个文件被跳过）");
                     }
                     else
                     {
                         HideKbAddDirectoryProgress($"✅ 已扫描并入库 {result.Files} 个文件，共 {result.Chunks} 个片段" +
-                            (result.Skipped > 0 ? $"（跳过已处理 {result.Skipped} 个）" : ""));
+                            (result.Skipped > 0 ? $"（跳过 {result.Skipped} 个文件）" : ""));
                         await RefreshKbDocsAsync(collection);
                     }
                     SaveKbConfig();
                 });
+            }
+            catch (OperationCanceledException)
+            {
+                DispatcherQueue.TryEnqueue(() => HideKbAddDirectoryProgress("⏹ 已取消扫描"));
+                SaveKbConfig();
             }
             catch (Exception ex)
             {
@@ -1423,11 +1517,27 @@ namespace C99
             finally
             {
                 _kbAddDirectoryBusy = false;
+                _kbScanCts = null;
+                _kbSkipFileCts = null;
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     KbAddDirectoryProgress.Visibility = Visibility.Collapsed;
+                    KbSkipFileBtn.Visibility = Visibility.Collapsed;
+                    KbCancelScanBtn.Visibility = Visibility.Collapsed;
                 });
             }
+        }
+
+        /// <summary>扫描过程中点击「跳过当前文件」</summary>
+        private void OnKbSkipCurrentFile(object sender, RoutedEventArgs e)
+        {
+            _kbSkipFileCts?.Cancel();
+        }
+
+        /// <summary>扫描过程中点击「取消」</summary>
+        private void OnKbCancelScan(object sender, RoutedEventArgs e)
+        {
+            _kbScanCts?.Cancel();
         }
 
         /// <summary>获取内置库已入库的源文件列表；非内置存储返回 null。</summary>
@@ -1581,12 +1691,14 @@ namespace C99
             {
                 KbDocsList.Items.Clear();
                 KbDocCount.Text = "文档列表";
+                ResetKbPreview();
                 return;
             }
             string name = collectionName ?? GetCurrentCollectionName();
             if (string.IsNullOrEmpty(name)) return;
 
             var all = await _kbStore.GetAllAsync(name);
+            _kbAllChunks = all;
             KbDocsList.Items.Clear();
             foreach (var c in all)
             {
@@ -1595,11 +1707,88 @@ namespace C99
                 {
                     Id = c.Id,
                     Title = title,
-                    Preview = $"长度 {c.Content.Length} · {c.CreatedAt:yyyy-MM-dd HH:mm}"
+                    Preview = $"长度 {c.Content.Length} · {c.CreatedAt:yyyy-MM-dd HH:mm}",
+                    FullContent = c.Content,
+                    SourceFile = c.SourceFile
                 });
             }
             long count = await _kbStore.CountAsync(name);
             KbDocCount.Text = $"文档列表（{count} 条 · 集合 {name}）";
+            ResetKbPreview();
+        }
+
+        /// <summary>重置切片预览为初始状态</summary>
+        private void ResetKbPreview()
+        {
+            _currentDocId = null;
+            KbPreviewTitle.Text = "请选择文档以预览切片";
+            KbPreviewText.Text = "";
+            KbPreviewSource.Text = "—";
+            KbPreviewChunkCount.Text = "—";
+            KbDeleteCurrentChunk.IsEnabled = false;
+        }
+
+        private async void OnKbDocsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (KbDocsList.SelectedItem == null)
+            {
+                ResetKbPreview();
+                return;
+            }
+            var sel = (dynamic)KbDocsList.SelectedItem;
+            string id = sel.Id;
+            string name = GetCurrentCollectionName();
+            if (string.IsNullOrEmpty(name)) return;
+            if (_kbStore == null || !_kbStore.IsConnected) return;
+
+            string content, source;
+            try
+            {
+                content = await _kbStore.GetContentAsync(name, id);
+                source = await _kbStore.GetSourceFileAsync(name, id);
+            }
+            catch
+            {
+                content = (string)sel.FullContent;
+                source = (string)(sel.SourceFile ?? "");
+            }
+            _currentDocId = id;
+            KbPreviewTitle.Text = (string)sel.Title;
+            KbPreviewText.Text = content;
+            KbPreviewSource.Text = string.IsNullOrEmpty(source) ? "—" : source;
+
+            // 同源文件的切片计数：与当前切片共享同一来源 metadata 的条目数
+            string? srcKey = null;
+            var match = _kbAllChunks.FirstOrDefault(c => c.Id == id);
+            if (match != null)
+            {
+                match.Metadata.TryGetValue("path", out var p1);
+                match.Metadata.TryGetValue("source", out var p2);
+                srcKey = string.IsNullOrEmpty(p1) ? p2 : p1;
+            }
+            int total = 1;
+            if (!string.IsNullOrEmpty(srcKey))
+                total = _kbAllChunks.Count(c =>
+                    (((c.Metadata.TryGetValue("path", out var sp) && !string.IsNullOrEmpty(sp)) ? sp.ToLowerInvariant() : null)
+                        ?? (c.Metadata.TryGetValue("source", out var ss) ? ss.ToLowerInvariant() : null)) == srcKey.ToLowerInvariant());
+            KbPreviewChunkCount.Text = total.ToString();
+            KbDeleteCurrentChunk.IsEnabled = true;
+        }
+
+        private async void OnKbDeleteCurrentChunk(object sender, RoutedEventArgs e)
+        {
+            if (_currentDocId == null || KbDocsList.SelectedItem == null)
+            {
+                await ShowDialogAsync("提示", "请先在列表中选择要删除的切片");
+                return;
+            }
+            string id = _currentDocId;
+            string name = GetCurrentCollectionName();
+            bool ok = await _kbStore!.DeleteAsync(name, id);
+            KbDbStatus.Text = ok ? $"✅ 已删除切片 {id}" : "❌ 删除切片失败";
+            KbDocsList.SelectedItem = null;
+            await RefreshKbDocsAsync(name);
+            SaveKbConfig();
         }
 
         private async void OnKbDeleteDoc(object sender, RoutedEventArgs e)
@@ -1611,6 +1800,7 @@ namespace C99
             }
             var sel = (dynamic)KbDocsList.SelectedItem;
             string id = sel.Id;
+            KbDocsList.SelectedItem = null;
             string name = GetCurrentCollectionName();
             bool ok = await _kbStore!.DeleteAsync(name, id);
             KbDbStatus.Text = ok ? $"✅ 已删除文档 {id}" : "❌ 删除失败";

@@ -52,6 +52,12 @@ namespace C99.Services
         /// <summary>读取集合内全部文档（供整理/导出）</summary>
         Task<List<KnowledgeChunk>> GetAllAsync(string collectionName);
 
+        /// <summary>获取文档的源文件路径（用于溯源）</summary>
+        Task<string> GetSourceFileAsync(string collectionName, string docId);
+
+        /// <summary>获取文档的完整原始内容</summary>
+        Task<string> GetContentAsync(string collectionName, string docId);
+
         /// <summary>获取自定义支持的配置说明文本</summary>
         string GetConfigSummary();
     }

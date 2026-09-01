@@ -540,37 +540,88 @@
                                                 <Button Grid.Column="3" Content="⬆ 添加入库" FontSize="12" Height="34"
                                                          Margin="8,0,0,0" Click="OnKbIngest"/>
                                             </Grid>
-                                            <ProgressBar x:Name="KbAddDirectoryProgress" Height="12" Margin="0,0,0,10"
-                                                       Visibility="Collapsed"/>
+<Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                                 <Grid.ColumnDefinitions>
+                                                     <ColumnDefinition Width="*"/>
+                                                     <ColumnDefinition Width="Auto"/>
+                                                     <ColumnDefinition Width="Auto"/>
+                                                 </Grid.ColumnDefinitions>
+                                                 <ProgressBar Grid.Column="0" x:Name="KbAddDirectoryProgress" Height="12" Minimum="0" Maximum="1"
+                                                             VerticalAlignment="Center" Visibility="Collapsed"/>
+                                                 <Button Grid.Column="1" x:Name="KbSkipFileBtn" Content="⏭ 跳过当前文件"
+                                                         FontSize="12" Height="30" Click="OnKbSkipCurrentFile" Visibility="Collapsed"/>
+                                                 <Button Grid.Column="2" x:Name="KbCancelScanBtn" Content="✕ 取消"
+                                                         FontSize="12" Height="30" Click="OnKbCancelScan" Visibility="Collapsed"/>
+                                             </Grid>
 
-                                            <Grid Margin="0,4,0,8">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock Grid.Column="0" x:Name="KbDocCount" Text="文档列表" FontSize="13"
-                                                           Foreground="Gray" VerticalAlignment="Center"/>
-                                                <Button Grid.Column="1" Content="🗑 删除选中" FontSize="12" Height="30"
-                                                        Click="OnKbDeleteDoc"/>
-                                            </Grid>
-                                            <ListView x:Name="KbDocsList" Height="180" FontSize="13" SelectionMode="Single">
-                                                <ListView.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <StackPanel>
-                                                            <TextBlock Text="{Binding Title}" FontSize="13" TextWrapping="Wrap"/>
-                                                            <TextBlock Text="{Binding Preview}" FontSize="11" Foreground="Gray"
-                                                                       TextWrapping="Wrap"/>
-                                                        </StackPanel>
-                                                    </DataTemplate>
-                                                </ListView.ItemTemplate>
-                                            </ListView>
-                                        </StackPanel>
-                                    </Border>
-                                </StackPanel>
-                            </ScrollViewer>
-                        </TabViewItem>
+                                             <Grid Margin="0,4,0,8">
+                                                 <Grid.ColumnDefinitions>
+                                                     <ColumnDefinition Width="*"/>
+                                                     <ColumnDefinition Width="Auto"/>
+                                                 </Grid.ColumnDefinitions>
+                                                 <TextBlock Grid.Column="0" x:Name="KbDocCount" Text="文档列表" FontSize="13"
+                                                            Foreground="Gray" VerticalAlignment="Center"/>
+                                                 <Button Grid.Column="1" Content="🗑 删除选中" FontSize="12" Height="30"
+                                                         Click="OnKbDeleteDoc"/>
+                                             </Grid>
+                                             <ListView x:Name="KbDocsList" Height="180" FontSize="13" SelectionMode="Single"
+                                                       SelectionChanged="OnKbDocsList_SelectionChanged">
+                                                 <ListView.ItemTemplate>
+                                                     <DataTemplate>
+                                                         <StackPanel>
+                                                             <TextBlock Text="{Binding Title}" FontSize="13" TextWrapping="Wrap"/>
+                                                             <TextBlock Text="{Binding Preview}" FontSize="11" Foreground="Gray"
+                                                                        TextWrapping="Wrap"/>
+                                                         </StackPanel>
+                                                     </DataTemplate>
+                                                 </ListView.ItemTemplate>
+                                             </ListView>
 
-                        <!-- Tab 2：召回 -->
+                                             <!-- 切片预览 -->
+                                             <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,8,0,0">
+                                                 <StackPanel>
+                                                     <TextBlock Text="切片预览" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                                     <Grid Margin="0,0,0,4">
+                                                         <Grid.ColumnDefinitions>
+                                                             <ColumnDefinition Width="*"/>
+                                                             <ColumnDefinition Width="Auto"/>
+                                                         </Grid.ColumnDefinitions>
+                                                         <TextBlock Grid.Column="0" x:Name="KbPreviewTitle" Text="请选择文档以预览切片"
+                                                                    FontSize="13" Foreground="Gray"/>
+<Button Grid.Column="1" x:Name="KbDeleteCurrentChunk" Content="🗑 删除当前切片" FontSize="12" Height="30"
+                                                                  Margin="8,0,0,0" Click="OnKbDeleteCurrentChunk"
+                                                                  IsEnabled="False"/>
+                                                     </Grid>
+                                                     <TextBox x:Name="KbPreviewText" Height="200" FontSize="13" TextWrapping="Wrap"
+                                                              AcceptsReturn="True" IsReadOnly="True"
+                                                              PlaceholderText="选中文档列表条目后将显示对应的切片内容..." Margin="0,0,0,8"/>
+                                                     <Grid ColumnSpacing="8" Margin="0,0,0,4">
+                                                         <Grid.ColumnDefinitions>
+                                                             <ColumnDefinition Width="*"/>
+                                                             <ColumnDefinition Width="Auto"/>
+                                                         </Grid.ColumnDefinitions>
+                                                         <TextBlock Grid.Column="0" Text="切片来源" FontSize="13" VerticalAlignment="Center"/>
+                                                         <TextBlock Grid.Column="1" x:Name="KbPreviewSource" FontSize="13"
+                                                                    Text="—" VerticalAlignment="Center"/>
+                                                     </Grid>
+                                                     <Grid ColumnSpacing="8" Margin="0,0,0,0">
+                                                         <Grid.ColumnDefinitions>
+                                                             <ColumnDefinition Width="*"/>
+                                                             <ColumnDefinition Width="Auto"/>
+                                                         </Grid.ColumnDefinitions>
+                                                         <TextBlock Grid.Column="0" Text="总切片数" FontSize="13" VerticalAlignment="Center"/>
+                                                         <TextBlock Grid.Column="1" x:Name="KbPreviewChunkCount" FontSize="13"
+                                                                    Text="—" VerticalAlignment="Center"/>
+                                                     </Grid>
+                                                 </StackPanel>
+                                             </Border>
+                                         </StackPanel>
+                                     </Border>
+                                 </StackPanel>
+                             </ScrollViewer>
+                         </TabViewItem>
+
+                         <!-- Tab 2：召回 -->
                         <TabViewItem Header="召回" IsClosable="False">
                             <ScrollViewer VerticalScrollMode="Auto" VerticalScrollBarVisibility="Auto">
                                 <StackPanel Margin="0,12,0,0" Spacing="12">

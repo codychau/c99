@@ -272,5 +272,35 @@ namespace C99.Services
             catch { }
             return result;
         }
+
+        public async Task<string> GetSourceFileAsync(string collectionName, string docId)
+        {
+            if (_conn == null) return "";
+            try
+            {
+                string table = await EnsureTableAsync(collectionName, 1536);
+                using var cmd = new NpgsqlCommand(
+                    $"SELECT metadata->>'source_file' FROM {Q(table)} WHERE id=@id;", _conn);
+                cmd.Parameters.AddWithValue("id", docId);
+                var result = await cmd.ExecuteScalarAsync();
+                return result?.ToString() ?? "";
+            }
+            catch { return ""; }
+        }
+
+        public async Task<string> GetContentAsync(string collectionName, string docId)
+        {
+            if (_conn == null) return "";
+            try
+            {
+                string table = await EnsureTableAsync(collectionName, 1536);
+                using var cmd = new NpgsqlCommand(
+                    $"SELECT content FROM {Q(table)} WHERE id=@id;", _conn);
+                cmd.Parameters.AddWithValue("id", docId);
+                var result = await cmd.ExecuteScalarAsync();
+                return result?.ToString() ?? "";
+            }
+            catch { return ""; }
+        }
     }
 }

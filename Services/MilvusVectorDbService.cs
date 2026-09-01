@@ -267,6 +267,57 @@ namespace C99.Services
             return results;
         }
 
+        public async Task<string> GetSourceFileAsync(string collectionName, string docId)
+        {
+            var payload = new
+            {
+                db_name = _database,
+                collection_name = collectionName,
+                filter = $"pk == \"{docId}\"",
+                output_fields = new[] { "metadata" }
+            };
+            var resp = await PostJsonAsync("/v2/vectordb/entities/get", payload);
+            var data = ParseResponse(resp);
+            if (data.HasValue && data.Value.TryGetProperty("data", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in arr.EnumerateArray())
+                {
+                    if (item.TryGetProperty("pk", out var pk) && pk.GetString() == docId
+                        && item.TryGetProperty("metadata", out var meta) && meta.ValueKind == JsonValueKind.Object)
+                    {
+                        if (meta.TryGetProperty("source_file", out var sf) && sf.GetString() is string s)
+                            return s;
+                    }
+                }
+            }
+            return "";
+        }
+
+        public async Task<string> GetContentAsync(string collectionName, string docId)
+        {
+            var payload = new
+            {
+                db_name = _database,
+                collection_name = collectionName,
+                filter = $"pk == \"{docId}\"",
+                output_fields = new[] { "content" }
+            };
+            var resp = await PostJsonAsync("/v2/vectordb/entities/get", payload);
+            var data = ParseResponse(resp);
+            if (data.HasValue && data.Value.TryGetProperty("data", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in arr.EnumerateArray())
+                {
+                    if (item.TryGetProperty("pk", out var pk) && pk.GetString() == docId)
+                    {
+                        if (item.TryGetProperty("content", out var c))
+                            return c.GetString() ?? "";
+                    }
+                }
+            }
+            return "";
+        }
+
         // ==================== HTTP 辅助 ====================
 
         private async Task<string> PostJsonAsync(string path, object payload)
