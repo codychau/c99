@@ -522,10 +522,7 @@
                                                         Margin="8,0,0,0" Click="OnKbDropCollection"/>
                                             </Grid>
 
-                                            <TextBlock Text="构建文档（输入文本或选择目录，对目录内文本文件建立向量索引）" FontSize="13" Margin="0,0,0,4"/>
-                                            <TextBox x:Name="KbIngestText" Height="80" FontSize="13" TextWrapping="Wrap"
-                                                     AcceptsReturn="True" PlaceholderText="在此粘贴/输入要加入知识库的文本内容..." Margin="0,0,0,10"/>
-<Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                            <Grid ColumnSpacing="8" Margin="0,0,0,10">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
@@ -537,8 +534,6 @@
                                                          Text="500" Margin="8,0,0,0"/>
                                                 <Button Grid.Column="2" Content="📁 添加目录" FontSize="12" Height="34"
                                                          Margin="8,0,0,0" Click="OnKbAddDirectory"/>
-                                                <Button Grid.Column="3" Content="⬆ 添加入库" FontSize="12" Height="34"
-                                                         Margin="8,0,0,0" Click="OnKbIngest"/>
                                             </Grid>
 <Grid ColumnSpacing="8" Margin="0,0,0,10">
                                                  <Grid.ColumnDefinitions>

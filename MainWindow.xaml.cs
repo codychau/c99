@@ -1,4 +1,4 @@
-using Microsoft.UI.Xaml;
+﻿using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
@@ -183,7 +183,14 @@ namespace C99
         }
         private void ShowAIDreamFactory() { HideAllContents(); AIDreamFactoryContent.Visibility = Visibility.Visible; }
         private void ShowAIGeneralStore() { HideAllContents(); AIGeneralStoreContent.Visibility = Visibility.Visible; _toolsPage = 0; RebuildAIToolsGrid(); }
-        private void ShowKnowledgeBase() { HideAllContents(); KnowledgeBaseContent.Visibility = Visibility.Visible; EnsureKnowledgeBaseLoaded(); }
+        private void ShowKnowledgeBase()
+        {
+            HideAllContents();
+            KnowledgeBaseContent.Visibility = Visibility.Visible;
+            EnsureKnowledgeBaseLoaded();
+            // 自动连接并加载集合列表，避免重启后下拉菜单为空（用户须手动点"连接"）
+            _ = EnsureKbStoreConnected();
+        }
         private void ShowSettings() { HideAllContents(); SettingsContent.Visibility = Visibility.Visible; LoadSettingsExternalLLMConfig(); }
         private void ShowAbout() { HideAllContents(); AboutContent.Visibility = Visibility.Visible; }
         private void ShowAIBase() { HideAllContents(); AIBaseContent.Visibility = Visibility.Visible; }
@@ -1087,7 +1094,20 @@ namespace C99
             _kbConfig = _config.KnowledgeBase;
             _kbStore ??= VectorStoreFactory.Create(_kbConfig);
 
-            if (_kbStore.IsConnected) return true;
+            if (_kbStore.IsConnected)
+            {
+                // 内置库构造时即已连接，但集合下拉在重启后为空，需主动刷新
+                try
+                {
+                    await RefreshKbCollectionSelectAsync();
+                    await RefreshKbDocsAsync();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"加载集合列表失败: {ex.Message}");
+                }
+                return true;
+            }
 
             KbDbStatus.Text = "连接中...";
             try
@@ -1189,15 +1209,30 @@ namespace C99
             foreach (var c in collections)
                 KbCollectionSelect.Items.Add(new ComboBoxItem { Content = c, Tag = c });
 
-            if (prevIdx >= 0 && prevIdx < collections.Count)
+            // 优先通过集合名称精确匹配恢复（支持中文、空格等所有字符）
+            if (!string.IsNullOrEmpty(prevName) && collections.Contains(prevName))
+            {
+                int matchIdx = collections.IndexOf(prevName);
+                KbCollectionSelect.SelectedIndex = matchIdx;
+                _kbConfig.CollectionName = prevName;
+                SaveKbConfig();
+            }
+            // 次选：通过配置中的集合名称恢复
+            else if (!string.IsNullOrEmpty(_kbConfig.CollectionName) && collections.Contains(_kbConfig.CollectionName))
+            {
+                int matchIdx = collections.IndexOf(_kbConfig.CollectionName);
+                KbCollectionSelect.SelectedIndex = matchIdx;
+            }
+            // 兜底：通过索引恢复（仅当名称无法匹配时）
+            else if (prevIdx >= 0 && prevIdx < collections.Count)
+            {
                 KbCollectionSelect.SelectedIndex = prevIdx;
-            else if (!string.IsNullOrEmpty(prevName))
-                SelectComboByTag(KbCollectionSelect, prevName);
-            else if (!string.IsNullOrEmpty(_kbConfig.CollectionName))
-                SelectComboByTag(KbCollectionSelect, _kbConfig.CollectionName);
-
-            if (KbCollectionSelect.SelectedItem == null && KbCollectionSelect.Items.Count > 0)
+            }
+            // 最后，如果仍无选中项则选择第一个
+            else if (KbCollectionSelect.Items.Count > 0)
+            {
                 KbCollectionSelect.SelectedIndex = 0;
+            }
         }
 
         private async void OnKbCollectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1412,6 +1447,7 @@ namespace C99
                         int embedded = 0;
                         int chunkCount = chunkModels.Count;
                         double fileWeightRatio = (double)fileWeights[fileIndex] / totalWeight;
+                        // 文件内进度分段：向量化占 90%，入库占 10%
                         while (embedded < chunkCount)
                         {
                             if (skipFileCts.IsCancellationRequested)
@@ -1442,6 +1478,15 @@ namespace C99
                                     try { v = await _kbEmbedding.EmbedAsync(batch[i], _kbConfig); }
                                     catch { v = FallbackHashEmbedding(batch[i], _kbConfig.Dimension); }
                                     vecs.Add(v);
+
+                                    // 降级逐条时也实时反馈进度，避免长时间无提示
+                                    int shownDone = embedded + i + 1;
+                                    double shownP = baseProgress + (double)shownDone / chunkCount * fileWeightRatio * 0.9;
+                                    DispatcherQueue.TryEnqueue(() =>
+                                    {
+                                        KbAddDirectoryProgress.Value = shownP;
+                                        KbDbStatus.Text = $"正在向量化 {shownIndex}/{shownCount}：{shownFile}（逐条 {shownDone}/{chunkCount}）";
+                                    });
                                 }
                             }
 
@@ -1454,7 +1499,7 @@ namespace C99
                             }
                             embedded += take;
 
-                            double shownProgress = baseProgress + (double)embedded / chunkCount * fileWeightRatio;
+                            double shownProgress = baseProgress + (double)embedded / chunkCount * fileWeightRatio * 0.9;
                             int shownEmbedded = embedded;
                             DispatcherQueue.TryEnqueue(() =>
                             {
@@ -1472,14 +1517,37 @@ namespace C99
                             continue;
                         }
 
-                        if (!await store.AddAsync(collection, chunkModels))
+                        // 分批入库并实时反馈写入进度（大文件一次全量写入期间无提示，会误以为卡死）
+                        bool addOk = true;
+                        const int addBatchSize = 64;
+                        int addedCount = 0;
+                        while (addedCount < chunkModels.Count)
+                        {
+                            scanCts.Token.ThrowIfCancellationRequested();
+                            int take = Math.Min(addBatchSize, chunkModels.Count - addedCount);
+                            var sub = chunkModels.GetRange(addedCount, take);
+                            if (!await store.AddAsync(collection, sub))
+                            {
+                                addOk = false;
+                                break;
+                            }
+                            addedCount += take;
+                            int shownAdded = addedCount;
+                            double addProgress = baseProgress + fileWeightRatio * (0.9 + 0.1 * (double)shownAdded / chunkCount);
+                            DispatcherQueue.TryEnqueue(() =>
+                            {
+                                KbAddDirectoryProgress.Value = addProgress;
+                                KbDbStatus.Text = $"正在入库 {shownIndex}/{shownCount}：{shownFile}（{shownAdded}/{chunkCount}）";
+                            });
+                        }
+                        if (!addOk)
                         {
                             DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = $"⚠ 文件 {fileName} 入库失败，已跳过");
                             doneWeight += fileWeights[fileIndex];
                             continue;
                         }
                         sw.Stop();
-                        Debug.WriteLine($"[KB] 文件 {fileName}：{text.Length / 1024.0:F1}KB / {chunkCount} 切块，向量化耗时 {sw.Elapsed.TotalSeconds:F1}s");
+                        Debug.WriteLine($"[KB] 文件 {fileName}：{text.Length / 1024.0:F1}KB / {chunkCount} 切块，向量化+入库耗时 {sw.Elapsed.TotalSeconds:F1}s");
                         doneWeight += fileWeights[fileIndex];
                         totalChunks += chunkCount;
                         totalFiles++;
@@ -1558,84 +1626,6 @@ namespace C99
             public int Chunks { get; }
             public int Skipped { get; }
             public KbAddDirectoryResult(int files, int chunks, int skipped) { Files = files; Chunks = chunks; Skipped = skipped; }
-        }
-
-        private async void OnKbIngest(object sender, RoutedEventArgs e)
-        {
-            string text = KbIngestText.Text.Trim();
-            if (string.IsNullOrEmpty(text))
-            {
-                await ShowDialogAsync("提示", "请先输入要加入知识库的内容");
-                return;
-            }
-            bool ok = await EnsureKbStoreConnected();
-            if (!ok)
-            {
-                await ShowDialogAsync("错误", "向量数据库未连接，请检查数据库配置");
-                return;
-            }
-
-            string collection = GetCurrentCollectionName();
-            var store = _kbStore!;
-            if (!string.IsNullOrEmpty(collection) && !await store.CollectionExistsAsync(collection))
-                await store.CreateCollectionAsync(collection, _kbConfig.Dimension);
-            if (string.IsNullOrEmpty(collection))
-            {
-                collection = _kbConfig.CollectionName;
-                SelectComboByTag(KbCollectionSelect, collection);
-            }
-
-            int chunkSize = int.TryParse(KbChunkSizeBox.Text, out var cs) && cs > 0 ? cs : 500;
-            var chunks = SplitChunks(text, chunkSize);
-            if (chunks.Count == 0) return;
-
-            KbDbStatus.Text = "向量化文档中...";
-            try
-            {
-                // 向量化 + 入库放到后台线程，避免阻塞 UI
-                var chunkModels = new List<KnowledgeChunk>();
-                foreach (var c in chunks)
-                {
-                    chunkModels.Add(new KnowledgeChunk
-                    {
-                        CollectionName = collection,
-                        Content = c,
-                        Metadata = new Dictionary<string, string> { ["source"] = "manual" }
-                    });
-                }
-
-                // 尝试调用向量模型；无 API 时使用本地哈希向量兜底
-                for (int i = 0; i < chunkModels.Count; i++)
-                {
-                    float[] vec;
-                    try
-                    {
-                        vec = await _kbEmbedding.EmbedAsync(chunkModels[i].Content, _kbConfig);
-                    }
-                    catch
-                    {
-                        vec = FallbackHashEmbedding(chunkModels[i].Content, _kbConfig.Dimension);
-                    }
-                    chunkModels[i].Embedding = vec;
-                }
-
-                bool added = await store.AddAsync(collection, chunkModels);
-                if (added)
-                {
-                    KbDbStatus.Text = $"✅ 已入库 {chunkModels.Count} 个片段（切分长度 {chunkSize}）";
-                    KbIngestText.Text = "";
-                    await RefreshKbDocsAsync(collection);
-                }
-                else
-                {
-                    await ShowDialogAsync("错误", "入库失败");
-                }
-            }
-            catch (Exception ex)
-            {
-                KbDbStatus.Text = "❌ 入库失败: " + ex.Message;
-            }
-            SaveKbConfig();
         }
 
         /// <summary>按长度切分文本为片段</summary>
