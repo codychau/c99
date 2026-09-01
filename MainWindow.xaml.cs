@@ -57,6 +57,7 @@ namespace C99
         private VectorEmbeddingService _kbEmbedding = new();
         private KnowledgeBaseConfig _kbConfig = new();
         private bool _kbInitialized;
+        private bool _kbAddDirectoryBusy;
 
         public MainWindow()
         {
@@ -1246,7 +1247,7 @@ namespace C99
             await _kbStore!.DropCollectionAsync(name);
             await RefreshKbCollectionSelectAsync();
             KbCollectionSelect.SelectedItem = null;
-            RefreshKbDocsAsync().GetAwaiter().GetResult();
+            await RefreshKbDocsAsync();
             KbDbStatus.Text = $"🗑 集合 {name} 已删除";
             SaveKbConfig();
         }
@@ -1261,117 +1262,192 @@ namespace C99
             ".c", ".cpp", ".h", ".hpp"
         };
 
-        /// <summary>添加目录：扫描目录下所有文本文件，切分并向量化入库</summary>
+        /// <summary>添加目录：扫描目录下所有文本文件，切分并向量化入库（后台线程执行，避免卡 UI）</summary>
         private async void OnKbAddDirectory(object sender, RoutedEventArgs e)
         {
+            if (_kbAddDirectoryBusy)
+                return;
+
             var folder = await PickFolderAsync();
             if (folder == null) return;
 
             string dir = folder.Path;
-            List<string> files;
-            try
-            {
-                files = Directory.GetFiles(dir, "*.*", SearchOption.AllDirectories)
-                    .Where(f => KbTextExtensions.Contains(Path.GetExtension(f)))
-                    .ToList();
-            }
-            catch (Exception ex)
-            {
-                await ShowDialogAsync("扫描失败", ex.Message);
-                return;
-            }
+            string collection = GetCurrentCollectionName();
+            if (string.IsNullOrEmpty(collection))
+                collection = _kbConfig.CollectionName;
+            int chunkSize = int.TryParse(KbChunkSizeBox.Text, out var cs) && cs > 0 ? cs : 500;
+            int dimension = _kbConfig.Dimension;
 
-            if (files.Count == 0)
-            {
-                await ShowDialogAsync("提示", "该目录下未找到可构建索引的文本文件");
-                return;
-            }
-
-            bool ok = await EnsureKbStoreConnected();
-            if (!ok)
+            // 先确保已连接（连接本身可能走网络/IO），同时把集合创建也放到后台
+            if (!await EnsureKbStoreConnected())
             {
                 await ShowDialogAsync("错误", "向量数据库未连接，请检查数据库配置");
                 return;
             }
-
-            string collection = GetCurrentCollectionName();
             var store = _kbStore!;
-            if (string.IsNullOrEmpty(collection))
-            {
-                collection = _kbConfig.CollectionName;
-                SelectComboByTag(KbCollectionSelect, collection);
-            }
             if (!await store.CollectionExistsAsync(collection))
-                await store.CreateCollectionAsync(collection, _kbConfig.Dimension);
+                await store.CreateCollectionAsync(collection, dimension);
 
-            int chunkSize = int.TryParse(KbChunkSizeBox.Text, out var cs) && cs > 0 ? cs : 500;
-            int totalChunks = 0;
-
-            KbAddDirectoryProgress.Visibility = Visibility.Visible;
-            KbDbStatus.Text = $"扫描到 {files.Count} 个文本文件，正在建立索引...";
+            // 获取已入库的源文件集合，供增量导入跳过（仅内置库支持）
+            var processedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             try
             {
-                for (int fileIndex = 0; fileIndex < files.Count; fileIndex++)
+                var existing = await ListKbSourceFilesAsync(collection);
+                if (existing != null)
+                    processedSources.UnionWith(existing);
+            }
+            catch { }
+
+            // 进入后台线程执行扫描/切分/向量化/入库
+            KbAddDirectoryProgress.Visibility = Visibility.Visible;
+            KbAddDirectoryProgress.Value = 0;
+            KbDbStatus.Text = "正在扫描目录...";
+            _kbAddDirectoryBusy = true;
+            try
+            {
+                var result = await Task.Run(async () =>
                 {
-                    var file = files[fileIndex];
-                    UpdateKbAddDirectoryProgress($"正在扫描 {fileIndex + 1}/{files.Count}：{Path.GetFileName(file)}",
-                        (double)(fileIndex + 1) / files.Count);
-                    string text;
+                    int totalChunks = 0;
+                    int totalFiles = 0;
+                    int skippedFiles = 0;
+                    List<string> files;
                     try
                     {
-                        text = await File.ReadAllTextAsync(file);
+                        files = Directory.GetFiles(dir, "*.*", SearchOption.AllDirectories)
+                            .Where(f => KbTextExtensions.Contains(Path.GetExtension(f)))
+                            .ToList();
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        continue; // 跳过无法读取的文件（如二进制误匹配）
+                        DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = "❌ 扫描失败: " + ex.Message);
+                        return new KbAddDirectoryResult(0, 0, 0);
                     }
-                    if (string.IsNullOrWhiteSpace(text)) continue;
 
-                    var chunkModels = new List<KnowledgeChunk>();
-                    foreach (var c in SplitChunks(text, chunkSize))
+                    if (files.Count == 0)
                     {
-                        chunkModels.Add(new KnowledgeChunk
+                        DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = "该目录下未找到可构建索引的文本文件");
+                        return new KbAddDirectoryResult(0, 0, 0);
+                    }
+
+                    // 跳过已处理文件（增量导入）
+                    var pending = files
+                        .Where(f => !processedSources.Contains(Path.GetFileName(f)))
+                        .ToList();
+                    skippedFiles = files.Count - pending.Count;
+                    files = pending;
+                    if (files.Count == 0)
+                    {
+                        DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = $"本次无新增文件（或全部已入库，待处理 0）");
+                        return new KbAddDirectoryResult(0, 0, skippedFiles);
+                    }
+
+                    for (int fileIndex = 0; fileIndex < files.Count; fileIndex++)
+                    {
+                        var file = files[fileIndex];
+                        string fileName = Path.GetFileName(file);
+                        double progress = (double)(fileIndex + 1) / files.Count;
+                        DispatcherQueue.TryEnqueue(() =>
                         {
-                            CollectionName = collection,
-                            Content = c,
-                            Metadata = new Dictionary<string, string>
-                            {
-                                ["source"] = "file",
-                                ["path"] = file
-                            }
+                            KbAddDirectoryProgress.Value = progress;
+                            KbDbStatus.Text = $"正在扫描 {fileIndex + 1}/{files.Count}：{fileName}（已跳过 {skippedFiles} 个）";
                         });
-                    }
 
-                    for (int i = 0; i < chunkModels.Count; i++)
-                    {
-                        float[] vec;
-                        try
+                        string text;
+                        try { text = File.ReadAllText(file); }
+                        catch { continue; } // 跳过无法读取的文件（如二进制误匹配）
+                        if (string.IsNullOrWhiteSpace(text)) continue;
+
+                        var chunkModels = new List<KnowledgeChunk>();
+                        foreach (var c in SplitChunks(text, chunkSize))
                         {
-                            vec = await _kbEmbedding.EmbedAsync(chunkModels[i].Content, _kbConfig);
+                            chunkModels.Add(new KnowledgeChunk
+                            {
+                                CollectionName = collection,
+                                Content = c,
+                                Metadata = new Dictionary<string, string>
+                                {
+                                    ["source"] = "file",
+                                    ["path"] = file,
+                                    ["source_file"] = fileName
+                                }
+                            });
                         }
-                        catch
+
+                        for (int i = 0; i < chunkModels.Count; i++)
                         {
-                            vec = FallbackHashEmbedding(chunkModels[i].Content, _kbConfig.Dimension);
+                            float[] vec;
+                            try
+                            {
+                                vec = await _kbEmbedding.EmbedAsync(chunkModels[i].Content, _kbConfig);
+                            }
+                            catch
+                            {
+                                vec = FallbackHashEmbedding(chunkModels[i].Content, _kbConfig.Dimension);
+                            }
+                            chunkModels[i].Embedding = vec;
                         }
-                        chunkModels[i].Embedding = vec;
-                    }
 
-                    if (!await store.AddAsync(collection, chunkModels))
+                        if (!await store.AddAsync(collection, chunkModels))
+                        {
+                            DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = $"⚠ 文件 {fileName} 入库失败，已跳过");
+                            continue;
+                        }
+                        totalChunks += chunkModels.Count;
+                        totalFiles++;
+                    }
+                    return new KbAddDirectoryResult(totalFiles, totalChunks, skippedFiles);
+                });
+
+                DispatcherQueue.TryEnqueue(async () =>
+                {
+                    if (result.Files == 0)
                     {
-                        await ShowDialogAsync("错误", $"文件 {Path.GetFileName(file)} 入库失败");
-                        break;
+                        HideKbAddDirectoryProgress(result.Skipped == 0
+                            ? "📂 未新增文档"
+                            : $"📂 无新增文档（已入库 {result.Skipped} 个文件自动跳过）");
                     }
-                    totalChunks += chunkModels.Count;
-                }
-
-                HideKbAddDirectoryProgress($"✅ 已扫描 {files.Count} 个文件，共入库 {totalChunks} 个片段");
-                await RefreshKbDocsAsync(collection);
+                    else
+                    {
+                        HideKbAddDirectoryProgress($"✅ 已扫描并入库 {result.Files} 个文件，共 {result.Chunks} 个片段" +
+                            (result.Skipped > 0 ? $"（跳过已处理 {result.Skipped} 个）" : ""));
+                        await RefreshKbDocsAsync(collection);
+                    }
+                    SaveKbConfig();
+                });
             }
             catch (Exception ex)
             {
-                HideKbAddDirectoryProgress("❌ 建立索引失败: " + ex.Message);
+                DispatcherQueue.TryEnqueue(() => HideKbAddDirectoryProgress("❌ 建立索引失败: " + ex.Message));
+                SaveKbConfig();
             }
-            SaveKbConfig();
+            finally
+            {
+                _kbAddDirectoryBusy = false;
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    KbAddDirectoryProgress.Visibility = Visibility.Collapsed;
+                });
+            }
+        }
+
+        /// <summary>获取内置库已入库的源文件列表；非内置存储返回 null。</summary>
+        private async Task<HashSet<string>?> ListKbSourceFilesAsync(string collection)
+        {
+            if (_kbStore is BuiltInVectorDbService builtIn)
+            {
+                var list = await builtIn.ListSourceFilesAsync(collection);
+                return new HashSet<string>(list, StringComparer.OrdinalIgnoreCase);
+            }
+            return null;
+        }
+
+        /// <summary>「添加目录」后台任务的返回结果</summary>
+        private sealed class KbAddDirectoryResult
+        {
+            public int Files { get; }
+            public int Chunks { get; }
+            public int Skipped { get; }
+            public KbAddDirectoryResult(int files, int chunks, int skipped) { Files = files; Chunks = chunks; Skipped = skipped; }
         }
 
         private async void OnKbIngest(object sender, RoutedEventArgs e)
@@ -1401,20 +1477,21 @@ namespace C99
 
             int chunkSize = int.TryParse(KbChunkSizeBox.Text, out var cs) && cs > 0 ? cs : 500;
             var chunks = SplitChunks(text, chunkSize);
+            if (chunks.Count == 0) return;
 
             KbDbStatus.Text = "向量化文档中...";
             try
             {
+                // 向量化 + 入库放到后台线程，避免阻塞 UI
                 var chunkModels = new List<KnowledgeChunk>();
                 foreach (var c in chunks)
                 {
-                    var chunk = new KnowledgeChunk
+                    chunkModels.Add(new KnowledgeChunk
                     {
                         CollectionName = collection,
                         Content = c,
                         Metadata = new Dictionary<string, string> { ["source"] = "manual" }
-                    };
-                    chunkModels.Add(chunk);
+                    });
                 }
 
                 // 尝试调用向量模型；无 API 时使用本地哈希向量兜底
@@ -1482,19 +1559,6 @@ namespace C99
             if (norm > 1e-12)
                 for (int i = 0; i < vec.Length; i++) vec[i] = (float)(vec[i] / norm);
             return vec;
-        }
-
-        /// <summary>更新"添加目录"进度条</summary>
-        private void UpdateKbAddDirectoryProgress(string message, double progress)
-        {
-            if (KbAddDirectoryProgress != null && KbAddDirectoryProgress.Visibility == Visibility.Visible)
-            {
-                DispatcherQueue.TryEnqueue(() =>
-                {
-                    KbAddDirectoryProgress.Value = progress;
-                    KbDbStatus.Text = message;
-                });
-            }
         }
 
         /// <summary>隐藏"添加目录"进度条</summary>

@@ -18,16 +18,17 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 ///   int    KB_DropCollection(IntPtr ctx, string name)
 ///   int    KB_ListCollections(IntPtr ctx, byte[] outBuf, int bufLen)
 ///   int    KB_Add(IntPtr ctx, string name, string id, float[] vec, int dim,
-///                 string content, string metadataJson)
+///                 string content, string metadataJson, string sourceFile)
 ///   int    KB_Delete(IntPtr ctx, string name, string id)
 ///   int    KB_Search(IntPtr ctx, string name, float[] queryVec, int dim,
 ///                    int topK, byte[] outBuf, int bufLen)
 ///   long   KB_Count(IntPtr ctx, string name)
 ///   int    KB_ReadAll(IntPtr ctx, string name, byte[] outBuf, int bufLen)
 ///   int    KB_SetMetric(IntPtr ctx, string name, string metric)  // 额外的距离算法切换
+///   int    KB_ListSourceFiles(IntPtr ctx, string name, byte[] outBuf, int bufLen)  // 已入库源文件列表
 ///
 /// 约定：所有返回 int 的函数，0 表示成功，非 0 表示失败。
-/// KB_ListCollections / KB_Search / KB_ReadAll 将 JSON 写入 outBuf（UTF-8），返回值：
+/// KB_ListCollections / KB_Search / KB_ReadAll / KB_ListSourceFiles 将 JSON 写入 outBuf（UTF-8），返回值：
 ///   0  成功
 ///   >0 表示缓冲区不足，返回所需长度（调用方据此扩容重试）
 
@@ -181,6 +182,7 @@ pub extern "C" fn KB_Add(
     dim: c_int,
     content: *const c_char,
     metadata_json: *const c_char,
+    source_file: *const c_char,
 ) -> c_int {
     catch_unwind(AssertUnwindSafe(|| {
         let engine = unsafe { &mut *(ctx as *mut KbEngine) };
@@ -194,6 +196,7 @@ pub extern "C" fn KB_Add(
         let metadata: serde_json::Value =
             serde_json::from_str(&unsafe { to_string(metadata_json) })
                 .unwrap_or(serde_json::Value::Object(Default::default()));
+        let source = unsafe { to_string(source_file) };
         let record = Record {
             id,
             content,
@@ -202,7 +205,7 @@ pub extern "C" fn KB_Add(
             created_at: now_iso(),
             score: None,
         };
-        if engine.add(&name, record) {
+        if engine.add(&name, &source, record) {
             0
         } else {
             1
@@ -239,14 +242,13 @@ pub extern "C" fn KB_Search(
     buf_len: c_int,
 ) -> c_int {
     catch_unwind(AssertUnwindSafe(|| {
-        let engine = unsafe { &mut *(ctx as *mut KbEngine) };
+        let engine = unsafe { &*(ctx as *mut KbEngine) };
         let name = unsafe { to_string(name) };
         let query = unsafe { vec_from_ptr(query_vec, dim) };
-        let col = match engine.get_or_none(&name) {
-            Some(c) => c,
+        let hits = match engine.search(&name, &query, top_k as usize) {
+            Some(h) => h,
             None => return 1,
         };
-        let hits = col.search(&query, top_k as usize, col.metric);
         let json = serde_json::to_string(&hits).unwrap_or_else(|_| "[]".to_string());
         unsafe { write_json_into(out_buf, buf_len, &json) }
     }))
@@ -276,21 +278,29 @@ pub extern "C" fn KB_ReadAll(
     catch_unwind(AssertUnwindSafe(|| {
         let engine = unsafe { &*(ctx as *mut KbEngine) };
         let name = unsafe { to_string(name) };
-        let col = match engine.collections.get(&name) {
-            Some(c) => c,
+        let hits = match engine.read_all(&name) {
+            Some(h) => h,
             None => return 1,
         };
-        let hits: Vec<engine::SearchHit> = col
-            .records
-            .iter()
-            .map(|r| engine::SearchHit {
-                id: r.id.clone(),
-                content: r.content.clone(),
-                metadata: r.metadata.clone(),
-                score: 0.0,
-            })
-            .collect();
         let json = serde_json::to_string(&hits).unwrap_or_else(|_| "[]".to_string());
+        unsafe { write_json_into(out_buf, buf_len, &json) }
+    }))
+    .unwrap_or(1)
+}
+
+/// 列出集合已入库的源文件，JSON: ["a.txt","b.md"]
+#[no_mangle]
+pub extern "C" fn KB_ListSourceFiles(
+    ctx: *mut c_void,
+    name: *const c_char,
+    out_buf: *mut c_char,
+    buf_len: c_int,
+) -> c_int {
+    catch_unwind(AssertUnwindSafe(|| {
+        let engine = unsafe { &*(ctx as *mut KbEngine) };
+        let name = unsafe { to_string(name) };
+        let files = engine.list_source_files(&name);
+        let json = serde_json::to_string(&files).unwrap_or_else(|_| "[]".to_string());
         unsafe { write_json_into(out_buf, buf_len, &json) }
     }))
     .unwrap_or(1)

@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using C99.Models;
 
@@ -18,6 +19,9 @@ namespace C99.Services
         private readonly NativeVectorDb? _native;
         private readonly string _dataDir;
         private readonly string _dllPath;
+
+        // 原生 DLL 不是线程安全的，所有 P/Invoke 必须串行执行且不能占用 UI 线程
+        private readonly SemaphoreSlim _nativeLock = new(1, 1);
 
         public VectorDbType DbType => VectorDbType.BuiltIn;
         public bool IsConnected => _native?.IsOpen ?? false;
@@ -43,33 +47,35 @@ namespace C99.Services
         public Task<bool> ConnectAsync()
         {
             EnsureNative();
-            return Task.FromResult(true);
+            return RunNativeAsync(() => true);
         }
 
         public Task DisconnectAsync()
         {
-            _native?.Close();
-            return Task.CompletedTask;
+            return RunNativeAsyncVoid(() => _native?.Close());
         }
 
         public Task<bool> CreateCollectionAsync(string collectionName, int dimension)
         {
             EnsureNative();
-            bool ok = _native!.CreateCollection(collectionName, dimension);
-            if (ok) _native.Dimension = dimension;
-            return Task.FromResult(ok);
+            return RunNativeAsync(() =>
+            {
+                bool ok = _native!.CreateCollection(collectionName, dimension);
+                if (ok) _native.Dimension = dimension;
+                return ok;
+            });
         }
 
         public Task<bool> DropCollectionAsync(string collectionName)
         {
             EnsureNative();
-            return Task.FromResult(_native!.DropCollection(collectionName));
+            return RunNativeAsync(() => _native!.DropCollection(collectionName));
         }
 
         public Task<List<string>> ListCollectionsAsync()
         {
             EnsureNative();
-            return Task.FromResult(_native!.ListCollections());
+            return RunNativeAsync(() => _native!.ListCollections());
         }
 
         public async Task<bool> CollectionExistsAsync(string collectionName)
@@ -81,21 +87,38 @@ namespace C99.Services
         public Task<bool> AddAsync(string collectionName, List<KnowledgeChunk> chunks)
         {
             EnsureNative();
-            bool ok = true;
-            foreach (var c in chunks)
+            return RunNativeAsync(() =>
             {
-                if (c.Embedding == null || c.Embedding.Length == 0)
-                    c.Embedding = FallbackHashEmbedding(c.Content, _native!.Dimension);
-                ok &= _native!.Add(collectionName, c.Id, c.Embedding,
-                    c.Content, JsonSerializer.Serialize(c.Metadata));
-            }
-            return Task.FromResult(ok);
+                bool ok = true;
+                foreach (var c in chunks)
+                {
+                    if (c.Embedding == null || c.Embedding.Length == 0)
+                        c.Embedding = FallbackHashEmbedding(c.Content, _native!.Dimension);
+                    // 取源文件标识（从 metadata.path 的文件名），供分片存储与增量识别
+                    string source = "";
+                    if (c.Metadata.TryGetValue("path", out var path) &&
+                        !string.IsNullOrWhiteSpace(path))
+                        source = Path.GetFileName(path);
+                    else if (c.Metadata.TryGetValue("source_file", out var sf))
+                        source = sf;
+                    ok &= _native!.Add(collectionName, c.Id, c.Embedding,
+                        c.Content, JsonSerializer.Serialize(c.Metadata), source);
+                }
+                return ok;
+            });
+        }
+
+        /// <summary>获取集合已入库的源文件列表（供增量导入跳过）</summary>
+        public Task<List<string>> ListSourceFilesAsync(string collectionName)
+        {
+            EnsureNative();
+            return RunNativeAsync(() => _native!.ListSourceFiles(collectionName));
         }
 
         public Task<bool> DeleteAsync(string collectionName, string docId)
         {
             EnsureNative();
-            return Task.FromResult(_native!.Delete(collectionName, docId));
+            return RunNativeAsync(() => _native!.Delete(collectionName, docId));
         }
 
         public Task<bool> DeleteByMetadataAsync(string collectionName, string metadataKey, string metadataValue)
@@ -107,19 +130,19 @@ namespace C99.Services
         public Task<List<KnowledgeChunk>> SearchAsync(string collectionName, float[] queryVector, int topK)
         {
             EnsureNative();
-            return Task.FromResult(_native!.Search(collectionName, queryVector, topK));
+            return RunNativeAsync(() => _native!.Search(collectionName, queryVector, topK));
         }
 
         public Task<long> CountAsync(string collectionName)
         {
             EnsureNative();
-            return Task.FromResult(_native!.Count(collectionName));
+            return RunNativeAsync(() => _native!.Count(collectionName));
         }
 
         public Task<List<KnowledgeChunk>> GetAllAsync(string collectionName)
         {
             EnsureNative();
-            return Task.FromResult(_native!.GetAll(collectionName));
+            return RunNativeAsync(() => _native!.GetAll(collectionName));
         }
 
         /// <summary>本地哈希向量兜底（无 API 时）</summary>
@@ -145,6 +168,30 @@ namespace C99.Services
         public void Dispose()
         {
             _native?.Close();
+        }
+
+        /// <summary>
+        /// 在后台线程串行执行原生调用，避免占用 UI 线程。
+        /// 原生回调耗时（尤其批量 Add / Search）时，UI 保持响应。
+        /// </summary>
+        private Task<T> RunNativeAsync<T>(Func<T> action)
+        {
+            return Task.Run(async () =>
+            {
+                await _nativeLock.WaitAsync();
+                try { return action(); }
+                finally { _nativeLock.Release(); }
+            });
+        }
+
+        private Task RunNativeAsyncVoid(Action action)
+        {
+            return Task.Run(async () =>
+            {
+                await _nativeLock.WaitAsync();
+                try { action(); }
+                finally { _nativeLock.Release(); }
+            });
         }
 
         /// <summary>校验 DLL 已加载，否则抛出异常提示用户。</summary>
@@ -234,7 +281,7 @@ namespace C99.Services
                 catch { return new List<string>(); }
             }
 
-            public bool Add(string collectionName, string id, float[] embedding, string content, string metadataJson)
+            public bool Add(string collectionName, string id, float[] embedding, string content, string metadataJson, string sourceFile)
             {
                 if (Context == IntPtr.Zero || string.IsNullOrEmpty(collectionName) ||
                     string.IsNullOrEmpty(id)) return false;
@@ -243,10 +290,23 @@ namespace C99.Services
                     fixed (float* pVec = embedding)
                     {
                         int rc = NativeMethods.KB_Add(Context, collectionName, id, pVec, embedding.Length,
-                            content, metadataJson);
+                            content, metadataJson, sourceFile);
                         return rc == 0;
                     }
                 }
+            }
+
+            public List<string> ListSourceFiles(string collectionName)
+            {
+                if (Context == IntPtr.Zero) return new List<string>();
+                var json = InvokeJson((IntPtr buf, int len) =>
+                    NativeMethods.KB_ListSourceFiles(Context, collectionName, buf, len));
+                if (string.IsNullOrEmpty(json)) return new List<string>();
+                try
+                {
+                    return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+                }
+                catch { return new List<string>(); }
             }
 
             public bool Delete(string collectionName, string id)
@@ -371,7 +431,8 @@ namespace C99.Services
             public static extern int KB_Add(IntPtr ctx, [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
                 [MarshalAs(UnmanagedType.LPUTF8Str)] string id, float* vec, int dim,
                 [MarshalAs(UnmanagedType.LPUTF8Str)] string content,
-                [MarshalAs(UnmanagedType.LPUTF8Str)] string metadataJson);
+                [MarshalAs(UnmanagedType.LPUTF8Str)] string metadataJson,
+                [MarshalAs(UnmanagedType.LPUTF8Str)] string sourceFile);
 
             [DllImport("BuiltInVectorDb.dll", EntryPoint = "KB_Delete", CallingConvention = CallingConvention.Cdecl)]
             public static extern int KB_Delete(IntPtr ctx, [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
@@ -386,6 +447,10 @@ namespace C99.Services
 
             [DllImport("BuiltInVectorDb.dll", EntryPoint = "KB_ReadAll", CallingConvention = CallingConvention.Cdecl)]
             public static extern int KB_ReadAll(IntPtr ctx, [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+                IntPtr outBuf, int bufLen);
+
+            [DllImport("BuiltInVectorDb.dll", EntryPoint = "KB_ListSourceFiles", CallingConvention = CallingConvention.Cdecl)]
+            public static extern int KB_ListSourceFiles(IntPtr ctx, [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
                 IntPtr outBuf, int bufLen);
 
             [DllImport("BuiltInVectorDb.dll", EntryPoint = "KB_SetMetric", CallingConvention = CallingConvention.Cdecl)]

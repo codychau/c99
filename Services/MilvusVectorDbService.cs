@@ -289,7 +289,7 @@ namespace C99.Services
                     if (doc.RootElement.TryGetProperty("code", out var code) &&
                         (code.GetInt32() == 2000 || code.GetInt32() == 2001))
                     {
-                        var token = GetAuthTokenAsync().GetAwaiter().GetResult();
+                        var token = await GetAuthTokenAsync();
                         if (!string.IsNullOrEmpty(token))
                         {
                             _authToken = token;
