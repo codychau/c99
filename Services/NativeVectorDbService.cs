@@ -255,6 +255,12 @@ namespace C99.Services
 
         private sealed class NativeVectorDb
         {
+            // Rust 端返回的 JSON 字段名是小写（id/content/metadata/score），必须大小写不敏感匹配
+            private static readonly JsonSerializerOptions NativeJsonOptions = new()
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
             public readonly string DataDir;
             public IntPtr Context;
             public int Dimension;
@@ -404,7 +410,7 @@ namespace C99.Services
                 if (string.IsNullOrEmpty(json)) return new List<KnowledgeChunk>();
                 try
                 {
-                    var hits = JsonSerializer.Deserialize<List<SearchHitJson>>(json);
+                    var hits = JsonSerializer.Deserialize<List<SearchHitJson>>(json, NativeJsonOptions);
                     if (hits == null) return new List<KnowledgeChunk>();
                     return hits.Select(h => new KnowledgeChunk
                     {

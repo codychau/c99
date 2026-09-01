@@ -1302,6 +1302,14 @@ namespace C99
             ".c", ".cpp", ".h", ".hpp"
         };
 
+        /// <summary>根据切分模式启用/禁用段落分隔符输入</summary>
+        private void OnKbChunkModeChanged(object sender, RoutedEventArgs e)
+        {
+            bool enabled = KbChunkByParagraph.IsChecked == true;
+            KbChunkSeparatorLabel.Opacity = enabled ? 1.0 : 0.5;
+            KbChunkSeparatorBox.IsEnabled = enabled;
+        }
+
         /// <summary>添加目录：扫描目录下所有文本文件，切分并向量化入库（后台线程执行，避免卡 UI）</summary>
         private async void OnKbAddDirectory(object sender, RoutedEventArgs e)
         {
@@ -1316,6 +1324,8 @@ namespace C99
             if (string.IsNullOrEmpty(collection))
                 collection = _kbConfig.CollectionName;
             int chunkSize = int.TryParse(KbChunkSizeBox.Text, out var cs) && cs > 0 ? cs : 500;
+            bool splitByParagraph = KbChunkByParagraph.IsChecked == true;
+            string paragraphSeparator = ParseParagraphSeparator(KbChunkSeparatorBox.Text);
             int dimension = _kbConfig.Dimension;
 
             // 先确保已连接（连接本身可能走网络/IO），同时把集合创建也放到后台
@@ -1422,17 +1432,19 @@ namespace C99
 
                         var sw = Stopwatch.StartNew();
                         var chunkModels = new List<KnowledgeChunk>();
-                        foreach (var c in SplitChunks(text, chunkSize))
+                        var rawChunks = SplitChunks(text, chunkSize, splitByParagraph, paragraphSeparator);
+                        for (int chunkIndex = 0; chunkIndex < rawChunks.Count; chunkIndex++)
                         {
                             chunkModels.Add(new KnowledgeChunk
                             {
                                 CollectionName = collection,
-                                Content = c,
+                                Content = rawChunks[chunkIndex],
                                 Metadata = new Dictionary<string, string>
                                 {
                                     ["source"] = "file",
                                     ["path"] = file,
-                                    ["source_file"] = fileName
+                                    ["source_file"] = fileName,
+                                    ["chunk_index"] = chunkIndex.ToString()
                                 }
                             });
                         }
@@ -1628,11 +1640,32 @@ namespace C99
             public KbAddDirectoryResult(int files, int chunks, int skipped) { Files = files; Chunks = chunks; Skipped = skipped; }
         }
 
-        /// <summary>按长度切分文本为片段</summary>
-        private static List<string> SplitChunks(string text, int chunkSize)
+        /// <summary>
+        /// 按段落或固定长度切分文本为片段。
+        /// 段落模式下先按分隔符分段，再对超长段落按 chunkSize 二次切分，保证每个片段不超过限制。
+        /// </summary>
+        private static List<string> SplitChunks(string text, int chunkSize, bool byParagraph, string separator)
         {
             var result = new List<string>();
             string cleaned = text.Replace("\r\n", "\n");
+
+            if (byParagraph && !string.IsNullOrEmpty(separator))
+            {
+                string sep = separator.Replace("\\r\\n", "\n").Replace("\\r", "\n").Replace("\\n", "\n");
+                foreach (var para in cleaned.Split(sep, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    string rest = para;
+                    while (rest.Length > chunkSize)
+                    {
+                        result.Add(rest.Substring(0, chunkSize));
+                        rest = rest.Substring(chunkSize);
+                    }
+                    if (rest.Length > 0)
+                        result.Add(rest);
+                }
+                return result;
+            }
+
             while (cleaned.Length > 0)
             {
                 int len = Math.Min(chunkSize, cleaned.Length);
@@ -1641,6 +1674,15 @@ namespace C99
                 cleaned = cleaned.Substring(len);
             }
             return result;
+        }
+
+        /// <summary>
+        /// 解析用户输入的段落分隔符：支持字面 "\r\n"、"\n"、"\r"、"\t" 转义，空输入回退为单个换行符。
+        /// </summary>
+        private static string ParseParagraphSeparator(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return "\n";
+            return raw.Replace("\\r\\n", "\r\n").Replace("\\r", "\r").Replace("\\n", "\n").Replace("\\t", "\t");
         }
 
         /// <summary>无向量模型 API 时的本地回退：字符哈希向量（演示用）</summary>
@@ -1689,22 +1731,68 @@ namespace C99
 
             var all = await _kbStore.GetAllAsync(name);
             _kbAllChunks = all;
+
+            // 旧数据（未记录 chunk_index）按同源文件分组后的顺序编号，作为段号兜底
+            var grpIndex = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var grp in all.GroupBy(GetKbSourceFile, StringComparer.OrdinalIgnoreCase))
+            {
+                var idxMap = new Dictionary<string, int>();
+                int i = 0;
+                foreach (var ch in grp.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id, StringComparer.Ordinal))
+                    idxMap[ch.Id] = i++;
+                grpIndex[grp.Key] = idxMap;
+            }
+
             KbDocsList.Items.Clear();
+            int filteredOut = 0;
             foreach (var c in all)
             {
-                var title = c.Content.Length > 60 ? c.Content[..60] : c.Content;
+                // 排除无内容的无效条目（空 content 无法提供任何可读信息）
+                if (string.IsNullOrWhiteSpace(c.Content) || string.IsNullOrEmpty(c.Id))
+                {
+                    filteredOut++;
+                    continue;
+                }
+
+                string fileName = GetKbSourceFile(c);
+                int chunkIndex = 0;
+                if (c.Metadata.TryGetValue("chunk_index", out var ci) && int.TryParse(ci, out var idx) && idx >= 0)
+                    chunkIndex = idx;
+                else if (grpIndex.TryGetValue(fileName, out var im) && im.TryGetValue(c.Id, out var gi))
+                    chunkIndex = gi;
+
+                const int maxTitle = 30;
+                string title = c.Content.Length <= maxTitle ? c.Content : c.Content[..maxTitle] + "…";
+
                 KbDocsList.Items.Add(new
                 {
                     Id = c.Id,
                     Title = title,
-                    Preview = $"长度 {c.Content.Length} · {c.CreatedAt:yyyy-MM-dd HH:mm}",
+                    Preview = $"{fileName} · 第 {chunkIndex + 1} 段 · {c.Content.Length} 字符",
                     FullContent = c.Content,
-                    SourceFile = c.SourceFile
+                    SourceFile = c.SourceFile,
+                    ChunkIndex = chunkIndex,
+                    FileName = fileName
                 });
             }
             long count = await _kbStore.CountAsync(name);
-            KbDocCount.Text = $"文档列表（{count} 条 · 集合 {name}）";
+            string filterSuffix = filteredOut > 0 ? $"（已排除 {filteredOut} 条无内容记录）" : "";
+            KbDocCount.Text = $"文档列表（{count} 条 · 集合 {name}）{filterSuffix}";
             ResetKbPreview();
+        }
+
+        /// <summary>
+        /// 从切片元数据中解析源文件名，兼容多种 metadata 键名
+        /// </summary>
+        private static string GetKbSourceFile(KnowledgeChunk c)
+        {
+            if (c.Metadata.TryGetValue("source_file", out var sf) && !string.IsNullOrWhiteSpace(sf))
+                return sf;
+            if (c.Metadata.TryGetValue("path", out var p) && !string.IsNullOrWhiteSpace(p))
+                return Path.GetFileName(p);
+            if (!string.IsNullOrWhiteSpace(c.SourceFile))
+                return c.SourceFile;
+            return "(未知来源)";
         }
 
         /// <summary>重置切片预览为初始状态</summary>

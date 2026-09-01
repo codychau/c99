@@ -528,12 +528,21 @@
                                                     <ColumnDefinition Width="Auto"/>
                                                     <ColumnDefinition Width="Auto"/>
                                                     <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="切分长度" FontSize="13" VerticalAlignment="Center"/>
                                                 <TextBox Grid.Column="1" x:Name="KbChunkSizeBox" Width="80" Height="32" FontSize="13"
                                                          Text="500" Margin="8,0,0,0"/>
-                                                <Button Grid.Column="2" Content="📁 添加目录" FontSize="12" Height="34"
-                                                         Margin="8,0,0,0" Click="OnKbAddDirectory"/>
+                                                <CheckBox Grid.Column="2" x:Name="KbChunkByParagraph" Content="按段落切分" FontSize="13"
+                                                          VerticalAlignment="Center" Margin="12,0,0,0"
+                                                          Checked="OnKbChunkModeChanged" Unchecked="OnKbChunkModeChanged"/>
+                                                <TextBlock Grid.Column="3" x:Name="KbChunkSeparatorLabel" Text="段落符" FontSize="13"
+                                                           VerticalAlignment="Center" Margin="12,0,0,0" Opacity="0.5"/>
+                                                <TextBox Grid.Column="4" x:Name="KbChunkSeparatorBox" Width="110" Height="32" FontSize="13"
+                                                         Text="\r\n" Margin="4,0,0,0" IsEnabled="False"/>
+                                                <Button Grid.Column="5" Content="📁 添加目录" FontSize="12" Height="34"
+                                                         Margin="12,0,0,0" Click="OnKbAddDirectory"/>
                                             </Grid>
 <Grid ColumnSpacing="8" Margin="0,0,0,10">
                                                  <Grid.ColumnDefinitions>
