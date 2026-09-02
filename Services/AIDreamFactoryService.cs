@@ -583,6 +583,9 @@ namespace C99.Services
                 _config.CurrentWorkflowMode = update.CurrentWorkflowMode;
                 _config.ModelSource = update.ModelSource;
                 _config.BuiltInModel = update.BuiltInModel;
+                _config.BuiltInModelFile = update.BuiltInModelFile;
+                _config.BuiltInApiUrl = update.BuiltInApiUrl;
+                _config.BuiltInModelName = update.BuiltInModelName;
                 _config.CustomApiUrl = update.CustomApiUrl;
                 _config.CustomApiKey = update.CustomApiKey;
                 _config.CustomModelName = update.CustomModelName;

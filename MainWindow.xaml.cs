@@ -181,7 +181,7 @@ namespace C99
             }
             _dashboardTimer.Start();
         }
-        private void ShowAIDreamFactory() { HideAllContents(); AIDreamFactoryContent.Visibility = Visibility.Visible; }
+        private void ShowAIDreamFactory() { HideAllContents(); AIDreamFactoryContent.Visibility = Visibility.Visible; _ = RefreshBuiltInEngineStatusAsync(); }
         private void ShowAIGeneralStore() { HideAllContents(); AIGeneralStoreContent.Visibility = Visibility.Visible; _toolsPage = 0; RebuildAIToolsGrid(); }
         private void ShowKnowledgeBase()
         {
@@ -3130,6 +3130,225 @@ namespace C99
         private bool _isLoadingDreamConfig;
         private volatile bool _isClosing;
 
+        // ==================== AI梦工厂 内置预设 ↔ AI 启动底座 ====================
+
+        /// <summary>底座引擎标识（与「AI 启动底座」页面 EngineSelector 一一对应）</summary>
+        private static readonly string[] BaseEngineKeys = { "llama.cpp", "ollama", "vllm", "lmstudio" };
+        private bool _builtInDetectBusy;
+
+        /// <summary>归一化旧版本内置预设名（如 "Local llama.cpp"）为底座引擎 key</summary>
+        private static string NormalizeBuiltInModelKey(string? value) => value switch
+        {
+            null => "",
+            "" => "",
+            "llama.cpp" or "Local llama.cpp" => "llama.cpp",
+            "ollama" or "Local ollama" => "ollama",
+            "vllm" or "Local vllm" => "vllm",
+            "lmstudio" or "Local lmstudio" => "lmstudio",
+            _ => value
+        };
+
+        /// <summary>读取「AI 启动底座」当前选中的模型子目录名（用于 ollama/vllm 的模型名）</summary>
+        private string? GetSelectedModelDirName()
+        {
+            if (ModelSubDirSelector?.SelectedItem is ComboBoxItem it && it.Tag is string dirPath)
+                return Path.GetFileName(dirPath);
+            if (!string.IsNullOrEmpty(_config.SelectedModelSubDir))
+                return _config.SelectedModelSubDir;
+            return null;
+        }
+
+        /// <summary>引擎是否已在「AI 启动底座」配置（设置过启动器目录，或系统能找到其可执行文件）</summary>
+        private bool IsBaseEngineConfigured(string key)
+        {
+            string dir = key switch
+            {
+                "llama.cpp" => LLamaLauncherDir?.Text?.Trim() ?? "",
+                "vllm" => VLLMLauncherDir?.Text?.Trim() ?? "",
+                "lmstudio" => LMStudioLauncherDir?.Text?.Trim() ?? "",
+                "ollama" => OllamaLauncherDir?.Text?.Trim() ?? "",
+                _ => ""
+            };
+            if (!string.IsNullOrWhiteSpace(dir)) return true;
+
+            // 未填启动器目录时，回退探测常见路径 / PATH
+            return key switch
+            {
+                "llama.cpp" => !string.IsNullOrEmpty(FindLLamaExe()),
+                "ollama" => !string.IsNullOrEmpty(FindOllamaExe()),
+                "lmstudio" => !string.IsNullOrEmpty(FindLMStudioExe()),
+                _ => false
+            };
+        }
+
+        /// <summary>由底座引擎 key 推导 OpenAI 兼容端点（地址/模型名/端口，端口等取自底座实际配置）</summary>
+        private (string ApiUrl, string ModelName, int Port) ResolveBuiltInEndpoint(string key)
+        {
+            switch (key)
+            {
+                case "llama.cpp":
+                {
+                    string host = string.IsNullOrWhiteSpace(LLamaHost?.Text) ? "127.0.0.1" : LLamaHost.Text.Trim();
+                    int port = int.TryParse(LLamaPort?.Text, out var p) && p > 0 ? p : 8080;
+                    return ($"http://{host}:{port}/v1/chat/completions", "local-model", port);
+                }
+                case "ollama":
+                    return ("http://localhost:11434/v1/chat/completions", GetSelectedModelDirName() ?? "local-model", 11434);
+                case "vllm":
+                    return ("http://localhost:8000/v1/chat/completions", GetSelectedModelDirName() ?? "local-model", 8000);
+                case "lmstudio":
+                    return ("http://127.0.0.1:1234/v1/chat/completions", "local-model", 1234);
+                default:
+                    return ("http://127.0.0.1:8080/v1/chat/completions", "local-model", 8080);
+            }
+        }
+
+        /// <summary>按「AI 启动底座」已配置的引擎重建内置预设下拉（只有配置过参数的引擎才会出现）</summary>
+        private void RebuildBuiltInEngineItems()
+        {
+            if (DreamFactoryBuiltInModel == null) return;
+            DreamFactoryBuiltInModel.Items.Clear();
+            string saved = NormalizeBuiltInModelKey(_dreamConfig?.BuiltInModel);
+            int i = 0, selectIdx = -1;
+            foreach (string key in BaseEngineKeys)
+            {
+                if (!IsBaseEngineConfigured(key)) continue;
+                var (_, _, port) = ResolveBuiltInEndpoint(key);
+                DreamFactoryBuiltInModel.Items.Add(new ComboBoxItem
+                {
+                    Content = $"{key}（端口 {port}）",
+                    Tag = key
+                });
+                if (key == saved) selectIdx = i;
+                i++;
+            }
+
+            if (DreamFactoryBuiltInModel.Items.Count == 0)
+                DreamFactoryBuiltInModel.PlaceholderText = "未在「AI 启动底座」中配置引擎";
+            else
+            {
+                DreamFactoryBuiltInModel.PlaceholderText = $"共 {DreamFactoryBuiltInModel.Items.Count} 个底座引擎";
+                if (selectIdx >= 0) DreamFactoryBuiltInModel.SelectedIndex = selectIdx;
+            }
+        }
+
+        /// <summary>探测某引擎是否已有模型在运行（GET /v1/models）</summary>
+        private async Task<bool> IsBaseEngineRunningAsync(string key)
+        {
+            try
+            {
+                var (_, _, port) = ResolveBuiltInEndpoint(key);
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+                using var resp = await client.GetAsync($"http://127.0.0.1:{port}/v1/models");
+                return resp.IsSuccessStatusCode;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>刷新内置预设：重建列表 + 探测运行状态 + 有运行中的引擎则自动连接</summary>
+        private async Task RefreshBuiltInEngineStatusAsync()
+        {
+            if (_isClosing || _isLoadingDreamConfig || _builtInDetectBusy) return;
+            if (DreamFactoryBuiltInModel == null || DreamFactoryBuiltInHint == null) return;
+            if (DreamFactoryBuiltInPanel.Visibility != Visibility.Visible) return;
+
+            _builtInDetectBusy = true;
+            try
+            {
+                RebuildBuiltInEngineItems();
+
+                var running = new List<string>();
+                foreach (string key in BaseEngineKeys)
+                {
+                    if (!IsBaseEngineConfigured(key)) continue;
+                    if (await IsBaseEngineRunningAsync(key)) running.Add(key);
+                }
+
+                foreach (var item in DreamFactoryBuiltInModel.Items.OfType<ComboBoxItem>())
+                {
+                    string? k = item.Tag?.ToString();
+                    if (k != null && running.Contains(k) && item.Content?.ToString()?.Contains("●") != true)
+                        item.Content = $"{item.Content}  ● 运行中";
+                }
+
+                // 自动连接：当前无选中，或已选中的引擎没在运行 → 选中第一个运行中的引擎
+                string? cur = (DreamFactoryBuiltInModel.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+                if (running.Count > 0 && (string.IsNullOrEmpty(cur) || !running.Contains(cur)))
+                {
+                    foreach (var item in DreamFactoryBuiltInModel.Items.OfType<ComboBoxItem>())
+                    {
+                        if (item.Tag?.ToString() == running[0])
+                        {
+                            DreamFactoryBuiltInModel.SelectedItem = item;
+                            break;
+                        }
+                    }
+                    SaveDreamFactoryConfig();
+                }
+
+                if (running.Count > 0)
+                    DreamFactoryBuiltInHint.Text = $"检测到 {running.Count} 个底座引擎正在运行，已自动连接：{string.Join("、", running)}。模型文件自动按底座所选模型目录判断。";
+                else if (DreamFactoryBuiltInModel.Items.Count > 0)
+                    DreamFactoryBuiltInHint.Text = "未检测到运行中的底座引擎。启动 AI 梦工厂服务时会询问是否前往启动。";
+                else
+                    DreamFactoryBuiltInHint.Text = "请在「AI 启动底座」中配置引擎（启动器目录/模型目录），配置后会自动出现在本列表。";
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"刷新内置预设失败: {ex.Message}");
+            }
+            finally
+            {
+                _builtInDetectBusy = false;
+            }
+        }
+
+        /// <summary>把「AI 启动底座」的引擎选择器切到指定引擎</summary>
+        private void SelectBaseEngine(string key)
+        {
+            foreach (var item in EngineSelector.Items.OfType<ComboBoxItem>())
+            {
+                if (item.Content?.ToString() == key)
+                {
+                    EngineSelector.SelectedItem = item;
+                    return;
+                }
+            }
+        }
+
+        /// <summary>启动 AI 梦工厂 HTTP 服务后，确保所选底座引擎在运行：已运行自动连接，未运行询问是否启动</summary>
+        private async Task EnsureDreamFactoryBaseEngineAsync()
+        {
+            if (_isClosing) return;
+            if (_dreamConfig.ModelSource != "BuiltIn") return;
+
+            string key = NormalizeBuiltInModelKey(_dreamConfig.BuiltInModel);
+            if (string.IsNullOrEmpty(key))
+            {
+                if (DreamFactoryBuiltInModel?.Items.Count == 0)
+                {
+                    bool? go = await ShowYesNoDialogAsync("尚未配置底座引擎",
+                        "当前选择了「内置预设」，但尚未在「AI 启动底座」中配置任何引擎。\n\n是否前往「AI 启动底座」配置引擎？");
+                    if (go == true) ShowAIBase();
+                }
+                return;
+            }
+
+            if (await IsBaseEngineRunningAsync(key)) return;
+
+            bool? start = await ShowYesNoDialogAsync("启动底座引擎",
+                $"检测到底座引擎「{key}」尚未运行，AI 调用将无法成功。\n\n是否前往「AI 启动底座」并立即启动该引擎？\n(引擎加载期间报告可能暂时失败，就绪后会自动恢复)");
+            if (start == true)
+            {
+                SelectBaseEngine(key);
+                ShowAIBase();
+                OnRunEngineClick(this, new RoutedEventArgs());
+            }
+        }
+
         private void LoadDreamFactoryConfig()
         {
             try
@@ -3188,25 +3407,7 @@ namespace C99
             DreamFactoryCustomPanel.Visibility = _dreamConfig.ModelSource == "Custom"
                 ? Visibility.Visible : Visibility.Collapsed;
 
-            if (!string.IsNullOrEmpty(_dreamConfig.BuiltInModel))
-            {
-                foreach (ComboBoxItem item in DreamFactoryBuiltInModel.Items)
-                {
-                    if (item.Content?.ToString()?.StartsWith(_dreamConfig.BuiltInModel) == true)
-                    { DreamFactoryBuiltInModel.SelectedItem = item; break; }
-                }
-            }
-
-            ScanBuiltInModelFiles();
-            if (!string.IsNullOrEmpty(_dreamConfig.BuiltInModelFile))
-            {
-                foreach (ComboBoxItem item in DreamFactoryBuiltInModelFile.Items)
-                {
-                    if (item.Content?.ToString() == _dreamConfig.BuiltInModelFile ||
-                        item.Tag?.ToString() == _dreamConfig.BuiltInModelFile)
-                    { DreamFactoryBuiltInModelFile.SelectedItem = item; break; }
-                }
-            }
+            RebuildBuiltInEngineItems();
 
             // 自定义外部模型 → 关联设置页面的配置
             string extUrl = _config.ExternalLLMApiUrl;
@@ -3271,13 +3472,16 @@ namespace C99
             if (DreamFactoryModelSource?.SelectedItem is ComboBoxItem srcItem)
                 _dreamConfig.ModelSource = srcItem.Tag?.ToString() ?? "BuiltIn";
 
-            if (DreamFactoryBuiltInModel?.SelectedItem is ComboBoxItem modelItem)
-                _dreamConfig.BuiltInModel = modelItem.Content?.ToString()?.Split(" (")[0] ?? "Local llama.cpp";
-
-            if (DreamFactoryBuiltInModelFile?.SelectedItem is ComboBoxItem fileItem)
-                _dreamConfig.BuiltInModelFile = fileItem.Tag?.ToString() ?? fileItem.Content?.ToString() ?? "";
-            else if (!string.IsNullOrEmpty(DreamFactoryBuiltInModelFile?.Text))
-                _dreamConfig.BuiltInModelFile = DreamFactoryBuiltInModelFile.Text.Trim();
+            // 内置预设：选中引擎时，把 AI 启动底座推导出的 API 地址/模型名写入配置
+            if (_dreamConfig.ModelSource == "BuiltIn"
+                && DreamFactoryBuiltInModel?.SelectedItem is ComboBoxItem modelItem
+                && modelItem.Tag is string engineKey)
+            {
+                _dreamConfig.BuiltInModel = engineKey;
+                var ep = ResolveBuiltInEndpoint(engineKey);
+                _dreamConfig.BuiltInApiUrl = ep.ApiUrl;
+                _dreamConfig.BuiltInModelName = ep.ModelName;
+            }
 
             if (DreamFactoryCustomModel?.SelectedItem is ComboBoxItem customItem)
                 _dreamConfig.CustomModelName = customItem.Tag?.ToString() ?? customItem.Content?.ToString() ?? "";
@@ -3412,11 +3616,15 @@ namespace C99
             }
         }
 
-        private void OnDreamFactoryToggle(object sender, RoutedEventArgs e)
+        private async void OnDreamFactoryToggle(object sender, RoutedEventArgs e)
         {
             if (_dreamFactoryService?.IsRunning == true)
             { _dreamFactoryService.Stop(); UpdateDreamFactoryStatusUI(); }
-            else { StartDreamFactoryService(); }
+            else
+            {
+                StartDreamFactoryService();
+                await EnsureDreamFactoryBaseEngineAsync();
+            }
         }
 
         // ========== 工作流模式切换（主流程 / 知识库检索流程） ==========
@@ -3588,51 +3796,14 @@ namespace C99
             DreamFactoryBuiltInPanel.Visibility = isBuiltIn ? Visibility.Visible : Visibility.Collapsed;
             DreamFactoryCustomPanel.Visibility = isBuiltIn ? Visibility.Collapsed : Visibility.Visible;
             OnDreamFactoryConfigChanged(sender, null!);
+            // 切到内置预设时刷新引擎列表并探测运行状态
+            if (isBuiltIn && !_isLoadingDreamConfig)
+                _ = RefreshBuiltInEngineStatusAsync();
         }
 
         private void OnDreamFactoryBuiltInModelChanged(object sender, SelectionChangedEventArgs e)
         {
             OnDreamFactoryConfigChanged(sender, e);
-            ScanBuiltInModelFiles();
-        }
-
-        private void OnRefreshBuiltInModelFiles(object sender, RoutedEventArgs e)
-        {
-            ScanBuiltInModelFiles();
-        }
-
-        private void ScanBuiltInModelFiles()
-        {
-            DreamFactoryBuiltInModelFile?.Items.Clear();
-            string searchPath = _config.LLMSearchPath;
-            if (string.IsNullOrEmpty(searchPath) || !Directory.Exists(searchPath)) return;
-
-            try
-            {
-                var ggufFiles = Directory.GetFiles(searchPath, "*.gguf", SearchOption.AllDirectories);
-                foreach (var file in ggufFiles)
-                {
-                    string displayName = Path.GetFileName(file);
-                    string relativePath = file.Replace(searchPath, "").TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                    string tag = file;
-                    var item = new ComboBoxItem
-                    {
-                        Content = displayName.Length > 60 ? displayName[..57] + "..." : displayName,
-                        Tag = tag
-                    };
-                    DreamFactoryBuiltInModelFile?.Items.Add(item);
-                }
-
-                if (DreamFactoryBuiltInModelFile?.Items.Count > 0)
-                    DreamFactoryBuiltInModelFile.PlaceholderText = $"共 {DreamFactoryBuiltInModelFile.Items.Count} 个模型";
-                else if (DreamFactoryBuiltInModelFile != null)
-                    DreamFactoryBuiltInModelFile.PlaceholderText = "未找到 .gguf 模型文件";
-            }
-            catch (Exception ex)
-            {
-                if (DreamFactoryBuiltInModelFile != null)
-                    DreamFactoryBuiltInModelFile.PlaceholderText = $"扫描失败: {ex.Message}";
-            }
         }
 
         private void OnDreamFactoryConfigChanged(object sender, object e)

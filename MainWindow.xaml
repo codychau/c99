@@ -136,26 +136,13 @@
                                 <ComboBoxItem Content="自定义外部模型" Tag="Custom"/>
                             </ComboBox>
                             <StackPanel x:Name="DreamFactoryBuiltInPanel" Visibility="Visible">
-                                <TextBlock Text="选择本地模型" FontSize="13" Margin="0,0,0,4"/>
-                                <ComboBox x:Name="DreamFactoryBuiltInModel" Height="34" FontSize="13" Margin="0,0,0,10"
-                                          SelectionChanged="OnDreamFactoryBuiltInModelChanged">
-                                    <ComboBoxItem Content="Local llama.cpp (localhost:8080)"/>
-                                    <ComboBoxItem Content="Local ollama (localhost:11434)"/>
-                                    <ComboBoxItem Content="Local vllm (localhost:8000)"/>
-                                </ComboBox>
-                                <TextBlock Text="选择模型文件" FontSize="13" Margin="0,0,0,4"/>
-                                <Grid Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <ComboBox x:Name="DreamFactoryBuiltInModelFile" Grid.Column="0"
-                                              Height="34" FontSize="13"
-                                              SelectionChanged="OnDreamFactoryConfigChanged"
-                                              PlaceholderText="自动扫描 .gguf 模型文件..."/>
-                                    <Button Grid.Column="1" Content="刷新" FontSize="12" Height="34" Width="60"
-                                            Margin="8,0,0,0" Click="OnRefreshBuiltInModelFiles"/>
-                                </Grid>
+                                <TextBlock Text="选择底座引擎（自动匹配 AI 启动底座配置）" FontSize="13" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="DreamFactoryBuiltInModel" Height="34" FontSize="13" Margin="0,0,0,4"
+                                          SelectionChanged="OnDreamFactoryBuiltInModelChanged"
+                                          PlaceholderText="未在「AI 启动底座」中配置引擎"/>
+                                <TextBlock x:Name="DreamFactoryBuiltInHint" FontSize="12" Foreground="Gray"
+                                           TextWrapping="Wrap" Margin="0,0,0,10"
+                                           Text="仅列出已在「AI 启动底座」配置参数的引擎；模型文件自动按底座所选模型目录判断。"/>
                             </StackPanel>
                             <StackPanel x:Name="DreamFactoryCustomPanel" Visibility="Collapsed">
                                 <TextBlock Text="使用设置中的外部大模型" FontSize="13" Margin="0,0,0,4" FontWeight="SemiBold"/>

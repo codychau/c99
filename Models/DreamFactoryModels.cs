@@ -43,8 +43,14 @@ namespace C99.Models
         /// <summary>内置预设模型名</summary>
         public string BuiltInModel { get; set; } = "Local llama.cpp";
 
-        /// <summary>内置预设选中的模型文件（.gguf 路径或模型名）</summary>
+        /// <summary>内置预设选中的模型文件（.gguf 路径或模型名，已废弃：模型文件自动按 AI 启动底座所选目录判断）</summary>
         public string BuiltInModelFile { get; set; } = "";
+
+        /// <summary>内置预设：由 AI 启动底座推导出的实际 API 地址（留空回退到内置映射）</summary>
+        public string BuiltInApiUrl { get; set; } = "";
+
+        /// <summary>内置预设：由 AI 启动底座推导出的实际模型名称（留空回退到内置映射）</summary>
+        public string BuiltInModelName { get; set; } = "";
 
         /// <summary>自定义 API 地址 (OpenAI 兼容)</summary>
         public string CustomApiUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
@@ -92,12 +98,16 @@ namespace C99.Models
         {
             if (ModelSource == "BuiltIn")
             {
+                // 优先使用由 AI 启动底座推导出的地址（端口等与底座配置保持一致）
+                if (!string.IsNullOrEmpty(BuiltInApiUrl))
+                    return BuiltInApiUrl;
                 return BuiltInModel switch
                 {
-                    "Local llama.cpp" => "http://localhost:8080/v1/chat/completions",
-                    "Local ollama" => "http://localhost:11434/v1/chat/completions",
-                    "Local vllm" => "http://localhost:8000/v1/chat/completions",
-                    _ => "http://localhost:8080/v1/chat/completions",
+                    "llama.cpp" or "Local llama.cpp" => "http://127.0.0.1:8080/v1/chat/completions",
+                    "ollama" or "Local ollama" => "http://localhost:11434/v1/chat/completions",
+                    "vllm" or "Local vllm" => "http://localhost:8000/v1/chat/completions",
+                    "lmstudio" or "Local lmstudio" => "http://127.0.0.1:1234/v1/chat/completions",
+                    _ => "http://127.0.0.1:8080/v1/chat/completions",
                 };
             }
             return CustomApiUrl;
@@ -108,15 +118,10 @@ namespace C99.Models
         {
             if (ModelSource == "BuiltIn")
             {
-                if (!string.IsNullOrEmpty(BuiltInModelFile))
-                    return BuiltInModelFile;
-                return BuiltInModel switch
-                {
-                    "Local llama.cpp" => "local-model",
-                    "Local ollama" => "local-model",
-                    "Local vllm" => "local-model",
-                    _ => "local-model",
-                };
+                // 优先使用由 AI 启动底座推导出的模型名（如 ollama 需发送真实模型名）
+                if (!string.IsNullOrEmpty(BuiltInModelName))
+                    return BuiltInModelName;
+                return "local-model";
             }
             return CustomModelName;
         }
