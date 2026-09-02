@@ -877,11 +877,14 @@
 
                                     <!-- GPU 层数 -ngl -->
                                     <TextBlock Text="GPU 层数 (-ngl, --gpu-layers)" FontSize="13" Margin="0,0,0,4"/>
-                                    <Grid Margin="0,0,0,10">
+                                    <Grid Margin="0,0,0,4">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="80"/></Grid.ColumnDefinitions>
                                         <Slider x:Name="LLamaGPULayers" Grid.Column="0" Minimum="0" Maximum="200" Value="33" ValueChanged="OnLLamaValueChanged" Margin="0,0,12,0"/>
                                         <TextBox Grid.Column="1" x:Name="LLamaGPULayersText" Text="33" FontSize="13" TextChanged="OnLLamaGPULayersTextChanged"/>
                                     </Grid>
+                                    <CheckBox x:Name="LLamaAllLayersGPU" Content="全部层进 GPU（-ngl -1，推荐，需显存装得下模型+KV）" FontSize="13" Margin="0,0,0,2"
+                                              Checked="OnLLamaAllLayersGPUChanged" Unchecked="OnLLamaAllLayersGPUChanged"/>
+                                    <TextBlock Text="勾选后忽略上方滑杆直接传 -ngl -1；若显存不足（日志报 hipMalloc / VRAM 不够），取消勾选改回部分层或减小上下文。" FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,10"/>
 
                                     <!-- 上下文长度 -c -->
                                     <TextBlock Text="上下文长度 (-c, --ctx-size)" FontSize="13" Margin="0,0,0,4"/>

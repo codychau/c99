@@ -268,6 +268,7 @@ namespace C99
             {
                 var dict = _config.EngineParams;
                 dict["LLamaGPULayers"] = ((int)LLamaGPULayers.Value).ToString();
+                dict["LLamaAllLayersGPU"] = LLamaAllLayersGPU.IsChecked == true ? "true" : "false";
                 dict["LLamaContextSize"] = ((int)LLamaContextSize.Value).ToString();
                 dict["LLamaNPredict"] = ((int)LLamaNPredict.Value).ToString();
                 dict["LLamaThreads"] = ((int)LLamaThreads.Value).ToString();
@@ -326,6 +327,12 @@ namespace C99
                 if (dict.Count == 0) return;
 
                 if (dict.TryGetValue("LLamaGPULayers", out var v) && int.TryParse(v, out var vi)) LLamaGPULayers.Value = vi;
+                bool allLayers = false;
+                if (dict.TryGetValue("LLamaAllLayersGPU", out v)) allLayers = v == "true";
+                LLamaAllLayersGPU.IsChecked = allLayers;
+                // 程序化赋值不一定触发事件，显式同步一次滑块/输入框可用状态
+                LLamaGPULayers.IsEnabled = !allLayers;
+                LLamaGPULayersText.IsEnabled = !allLayers;
                 if (dict.TryGetValue("LLamaContextSize", out v) && int.TryParse(v, out vi)) LLamaContextSize.Value = vi;
                 if (dict.TryGetValue("LLamaNPredict", out v) && int.TryParse(v, out vi)) LLamaNPredict.Value = vi;
                 if (dict.TryGetValue("LLamaThreads", out v) && int.TryParse(v, out vi)) LLamaThreads.Value = vi;
@@ -2111,6 +2118,7 @@ namespace C99
                     LLamaMLock.IsChecked = true;
                     LLamaMMap.SelectedIndex = 0;
                     LLamaFlashAttn.SelectedIndex = 0;
+                    LLamaAllLayersGPU.IsChecked = false;
                     LLamaTemperature.Text = "0.80";
                     LLamaTopK.Text = "40"; LLamaTopP.Text = "0.95"; LLamaMinP.Text = "0.05";
                     LLamaExtraArgs.Text = "--cont-batching";
@@ -2123,6 +2131,7 @@ namespace C99
                     LLamaMLock.IsChecked = false;
                     LLamaMMap.SelectedIndex = 0;
                     LLamaFlashAttn.SelectedIndex = 0;
+                    LLamaAllLayersGPU.IsChecked = false;
                     LLamaTemperature.Text = "0.80";
                     LLamaTopK.Text = "40"; LLamaTopP.Text = "0.95"; LLamaMinP.Text = "0.05";
                     LLamaExtraArgs.Text = "";
@@ -2135,6 +2144,7 @@ namespace C99
                     LLamaMLock.IsChecked = true;
                     LLamaMMap.SelectedIndex = 1; // --no-mmap
                     LLamaFlashAttn.SelectedIndex = 1; // on
+                    LLamaAllLayersGPU.IsChecked = true;
                     LLamaTemperature.Text = "0.60";
                     LLamaTopK.Text = "20"; LLamaTopP.Text = "0.90"; LLamaMinP.Text = "0.10";
                     LLamaExtraArgs.Text = "--cont-batching --no-warmup";
@@ -2243,6 +2253,15 @@ namespace C99
         }
         private void OnLLamaSelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            MarkParamsDirty();
+        }
+        private void OnLLamaAllLayersGPUChanged(object sender, RoutedEventArgs e)
+        {
+            // 初始化阶段控件可能未就绪
+            if (LLamaGPULayers == null) return;
+            bool all = LLamaAllLayersGPU.IsChecked == true;
+            LLamaGPULayers.IsEnabled = !all;
+            LLamaGPULayersText.IsEnabled = !all;
             MarkParamsDirty();
         }
         private void OnLLamaGPULayersTextChanged(object sender, TextChangedEventArgs e)
@@ -2469,7 +2488,10 @@ namespace C99
             }
 
             // ---- 基础参数 ----
-            argsList.Add($"-ngl {(int)LLamaGPULayers.Value}");
+            int ngl = LLamaAllLayersGPU.IsChecked == true ? -1 : (int)LLamaGPULayers.Value;
+            argsList.Add($"-ngl {ngl}");
+            if (ngl == -1)
+                AppendLog("🎯 全量层进 GPU（-ngl -1）");
             argsList.Add($"-c {(int)LLamaContextSize.Value}");
             argsList.Add($"-n {(int)LLamaNPredict.Value}");
             argsList.Add($"-t {(int)LLamaThreads.Value}");
