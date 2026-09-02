@@ -1460,6 +1460,8 @@ namespace C99
                         int chunkCount = chunkModels.Count;
                         double fileWeightRatio = (double)fileWeights[fileIndex] / totalWeight;
                         // 文件内进度分段：向量化占 90%，入库占 10%
+                        // 批次令牌：同时响应「全局取消」与「跳过当前文件」的取消请求
+                        using var batchCts = CancellationTokenSource.CreateLinkedTokenSource(scanCts.Token, skipFileCts.Token);
                         while (embedded < chunkCount)
                         {
                             if (skipFileCts.IsCancellationRequested)
@@ -1477,7 +1479,13 @@ namespace C99
                             List<float[]>? vecs;
                             try
                             {
-                                vecs = await _kbEmbedding.EmbedBatchAsync(batch, _kbConfig, scanCts.Token);
+                                vecs = await _kbEmbedding.EmbedBatchAsync(batch, _kbConfig, batchCts.Token);
+                            }
+                            catch (OperationCanceledException) when (skipFileCts.IsCancellationRequested)
+                            {
+                                // 仅跳过当前文件：中断向量化，剩余切片不入库
+                                skipThisFile = true;
+                                break;
                             }
                             catch (OperationCanceledException) { throw; }
                             catch
@@ -1520,12 +1528,12 @@ namespace C99
                             });
                         }
 
-                        _kbSkipFileCts = null;
                         if (skipThisFile)
                         {
                             skippedFiles++;
                             doneWeight += fileWeights[fileIndex];
                             DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = $"已跳过文件 {fileName}");
+                            _kbSkipFileCts = null;
                             continue;
                         }
 
@@ -1536,6 +1544,12 @@ namespace C99
                         int addedCount = 0;
                         while (addedCount < chunkModels.Count)
                         {
+                            if (skipFileCts.IsCancellationRequested)
+                            {
+                                // 跳过请求发生在入库阶段：停止剩余切片，已写入批次保留
+                                skipThisFile = true;
+                                break;
+                            }
                             scanCts.Token.ThrowIfCancellationRequested();
                             int take = Math.Min(addBatchSize, chunkModels.Count - addedCount);
                             var sub = chunkModels.GetRange(addedCount, take);
@@ -1554,6 +1568,14 @@ namespace C99
                                 KbAddDirectoryProgress.Value = addProgress;
                                 KbDbStatus.Text = $"正在入库 {shownIndex}/{shownCount}：{shownFile}（{shownAdded}/{chunkCount}）";
                             });
+                        }
+                        _kbSkipFileCts = null;
+                        if (skipThisFile)
+                        {
+                            skippedFiles++;
+                            doneWeight += fileWeights[fileIndex];
+                            DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = $"已跳过文件 {fileName}");
+                            continue;
                         }
                         if (!addOk)
                         {
