@@ -9,6 +9,7 @@
 
 # Build results
 bin/
+AppPackages/
 obj/
 [Dd]ebug/
 [Rr]elease/
