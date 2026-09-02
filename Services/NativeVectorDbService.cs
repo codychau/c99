@@ -84,16 +84,23 @@ namespace C99.Services
             return list.Any(n => string.Equals(n, collectionName, StringComparison.OrdinalIgnoreCase));
         }
 
-        public Task<bool> AddAsync(string collectionName, List<KnowledgeChunk> chunks)
+        public Task<VectorAddResult> AddAsync(string collectionName, List<KnowledgeChunk> chunks)
         {
             EnsureNative();
             return RunNativeAsync(() =>
             {
-                bool ok = true;
+                var problems = new List<string>();
+                int succeeded = 0;
                 foreach (var c in chunks)
                 {
                     if (c.Embedding == null || c.Embedding.Length == 0)
                         c.Embedding = FallbackHashEmbedding(c.Content, _native!.Dimension);
+                    // 向量维度必须与集合维度一致，否则原生端入库必然失败（常见原因：换过嵌入模型/维度配置）
+                    if (c.Embedding.Length != _native!.Dimension)
+                    {
+                        problems.Add($"片段维度 {c.Embedding.Length} 与集合维度 {_native.Dimension} 不一致");
+                        continue;
+                    }
                     // 取源文件标识（从 metadata.path 的文件名），供分片存储与增量识别
                     string source = "";
                     if (c.Metadata.TryGetValue("path", out var path) &&
@@ -101,10 +108,19 @@ namespace C99.Services
                         source = Path.GetFileName(path);
                     else if (c.Metadata.TryGetValue("source_file", out var sf))
                         source = sf;
-                    ok &= _native!.Add(collectionName, c.Id, c.Embedding,
+                    int rc = _native.Add(collectionName, c.Id, c.Embedding,
                         c.Content, JsonSerializer.Serialize(c.Metadata), source);
+                    if (rc != 0)
+                    {
+                        problems.Add($"片段 {source} 写入返回码 {rc}");
+                        continue;
+                    }
+                    succeeded++;
                 }
-                return ok;
+                if (problems.Count > 0)
+                    return VectorAddResult.Fail(
+                        $"{string.Join("；", problems)}（本批 {succeeded}/{chunks.Count} 段成功）");
+                return VectorAddResult.Ok();
             });
         }
 
@@ -307,17 +323,16 @@ namespace C99.Services
                 catch { return new List<string>(); }
             }
 
-            public bool Add(string collectionName, string id, float[] embedding, string content, string metadataJson, string sourceFile)
+            public int Add(string collectionName, string id, float[] embedding, string content, string metadataJson, string sourceFile)
             {
                 if (Context == IntPtr.Zero || string.IsNullOrEmpty(collectionName) ||
-                    string.IsNullOrEmpty(id)) return false;
+                    string.IsNullOrEmpty(id)) return -1;
                 unsafe
                 {
                     fixed (float* pVec = embedding)
                     {
-                        int rc = NativeMethods.KB_Add(Context, collectionName, id, pVec, embedding.Length,
+                        return NativeMethods.KB_Add(Context, collectionName, id, pVec, embedding.Length,
                             content, metadataJson, sourceFile);
-                        return rc == 0;
                     }
                 }
             }

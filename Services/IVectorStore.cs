@@ -34,8 +34,8 @@ namespace C99.Services
         /// <summary>集合是否存在</summary>
         Task<bool> CollectionExistsAsync(string collectionName);
 
-        /// <summary>向集合中插入文档（含向量）</summary>
-        Task<bool> AddAsync(string collectionName, List<KnowledgeChunk> chunks);
+        /// <summary>向集合中插入文档（含向量）；失败时返回的具体原因见 <see cref="VectorAddResult.Error"/>。</summary>
+        Task<VectorAddResult> AddAsync(string collectionName, List<KnowledgeChunk> chunks);
 
         /// <summary>删除文档</summary>
         Task<bool> DeleteAsync(string collectionName, string docId);

@@ -123,9 +123,11 @@ namespace C99.Services
             return list.Any(n => string.Equals(n, NormalizeName(collectionName), StringComparison.OrdinalIgnoreCase));
         }
 
-        public async Task<bool> AddAsync(string collectionName, List<KnowledgeChunk> chunks)
+        public async Task<VectorAddResult> AddAsync(string collectionName, List<KnowledgeChunk> chunks)
         {
-            if (_conn == null || chunks == null || chunks.Count == 0) return true;
+            if (_conn == null)
+                return VectorAddResult.Fail("未连接 PostgreSQL，无法写入");
+            if (chunks == null || chunks.Count == 0) return VectorAddResult.Ok();
             try
             {
                 int dim = chunks.FirstOrDefault()?.Embedding?.Length ?? 1536;
@@ -133,6 +135,8 @@ namespace C99.Services
 
                 foreach (var chunk in chunks)
                 {
+                    if (chunk.Embedding != null && chunk.Embedding.Length != dim)
+                        return VectorAddResult.Fail($"片段 {chunk.Id.Substring(0, 8)} 向量维度 {chunk.Embedding.Length} 与表维度 {dim} 不一致");
                     var vecText = chunk.Embedding != null
                         ? "[" + string.Join(",", chunk.Embedding.Select(f => f.ToString("G9"))) + "]"
                         : null;
@@ -147,9 +151,12 @@ namespace C99.Services
                     cmd.Parameters.AddWithValue("ca", chunk.CreatedAt);
                     await cmd.ExecuteNonQueryAsync();
                 }
-                return true;
+                return VectorAddResult.Ok();
             }
-            catch { return false; }
+            catch (Exception ex)
+            {
+                return VectorAddResult.Fail($"PostgreSQL 写入异常：{ex.Message}");
+            }
         }
 
         private static string VecLiteral(string? vecText)

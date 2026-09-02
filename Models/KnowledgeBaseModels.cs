@@ -109,4 +109,26 @@ namespace C99.Models
         /// <summary>在源文件中的切片索引</summary>
         public int ChunkIndex { get; set; } = 0;
     }
+
+    /// <summary>
+    /// 向量库写入（AddAsync）结果：携带失败原因，便于界面明确提示。
+    /// </summary>
+    public class VectorAddResult
+    {
+        /// <summary>是否成功</summary>
+        public bool Success { get; }
+
+        /// <summary>失败原因（成功时为 null）</summary>
+        public string? Error { get; }
+
+        public VectorAddResult(bool success, string? error)
+        {
+            Success = success;
+            Error = error;
+        }
+
+        public static VectorAddResult Ok() => new(true, null);
+
+        public static VectorAddResult Fail(string error) => new(false, error);
+    }
 }

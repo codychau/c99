@@ -122,6 +122,40 @@ start C99.sln
 
 ---
 
+## 📦 编译指南
+
+### 1. 编译 Rust 向量数据库 DLL
+
+进入 Rust 项目目录并编译生成 DLL：
+
+```powershell
+cd NATIVE\vector-db-rust
+cargo build --release
+```
+
+编译完成后，DLL 文件位于：`NATIVE\vector-db-rust\target\release\BuiltInVectorDb.dll`
+
+### 2. 移动 DLL 到 C# 项目输出目录
+
+将生成的 DLL 文件复制到 C# 项目的 bin 目录：
+
+```powershell
+Move-Item -Force "NATIVE\vector-db-rust\target\release\BuiltInVectorDb.dll" "bin\Release\net8.0-windows10.0.19041.0\BuiltInVectorDb.dll"
+```
+
+### 3. 编译 C# 项目
+
+使用 dotnet 命令编译项目：
+
+```bash
+# 编译 Release 版本
+dotnet build C99.sln -c Release -p:EnableMsixTooling=false -p:AppxPackageSigningEnabled=false
+```
+
+编译后的可执行文件和依赖库将位于：`bin\Release\net8.0-windows10.0.19041.0\`
+
+---
+
 ## 📦 构建发布
 
 ```bash

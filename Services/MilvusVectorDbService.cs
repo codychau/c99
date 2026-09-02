@@ -118,9 +118,9 @@ namespace C99.Services
             return list.Any(n => string.Equals(n, collectionName, StringComparison.OrdinalIgnoreCase));
         }
 
-        public async Task<bool> AddAsync(string collectionName, List<KnowledgeChunk> chunks)
+        public async Task<VectorAddResult> AddAsync(string collectionName, List<KnowledgeChunk> chunks)
         {
-            if (chunks == null || chunks.Count == 0) return true;
+            if (chunks == null || chunks.Count == 0) return VectorAddResult.Ok();
 
             var rows = new List<Dictionary<string, object>>();
             foreach (var c in chunks)
@@ -143,7 +143,8 @@ namespace C99.Services
                 data = rows
             };
             var resp = await PostJsonAsync("/v2/vectordb/entities/insert", payload);
-            return IsSuccess(resp);
+            if (IsSuccess(resp)) return VectorAddResult.Ok();
+            return VectorAddResult.Fail($"Milvus 写入失败：{ExtractError(resp)}");
         }
 
         public async Task<bool> DeleteAsync(string collectionName, string docId)
@@ -383,6 +384,22 @@ namespace C99.Services
             }
             catch { }
             return true;
+        }
+
+        private static string ExtractError(string body)
+        {
+            try
+            {
+                var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("message", out var m) &&
+                    !string.IsNullOrWhiteSpace(m.GetString()))
+                    return m.GetString()!;
+                if (doc.RootElement.TryGetProperty("reason", out var r) &&
+                    !string.IsNullOrWhiteSpace(r.GetString()))
+                    return r.GetString()!;
+            }
+            catch { }
+            return body.Length <= 200 ? body : body.Substring(0, 200) + "…";
         }
 
         private static JsonElement? ParseResponse(string body)

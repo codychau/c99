@@ -1422,7 +1422,7 @@ namespace C99
                         DispatcherQueue.TryEnqueue(() =>
                         {
                             KbAddDirectoryProgress.Value = shownBase;
-                            KbDbStatus.Text = $"正在扫描 {shownIndex}/{shownCount}：{shownFile}（已跳过 {shownSkipped} 个）";
+                            SetKbDbStatus($"正在扫描 {shownIndex}/{shownCount}：{shownFile}（已跳过 {shownSkipped} 个）");
                         });
 
                         string text;
@@ -1531,6 +1531,7 @@ namespace C99
 
                         // 分批入库并实时反馈写入进度（大文件一次全量写入期间无提示，会误以为卡死）
                         bool addOk = true;
+                        string? addError = null;
                         const int addBatchSize = 64;
                         int addedCount = 0;
                         while (addedCount < chunkModels.Count)
@@ -1538,9 +1539,11 @@ namespace C99
                             scanCts.Token.ThrowIfCancellationRequested();
                             int take = Math.Min(addBatchSize, chunkModels.Count - addedCount);
                             var sub = chunkModels.GetRange(addedCount, take);
-                            if (!await store.AddAsync(collection, sub))
+                            var addResult = await store.AddAsync(collection, sub);
+                            if (!addResult.Success)
                             {
                                 addOk = false;
+                                addError = addResult.Error ?? "未知原因";
                                 break;
                             }
                             addedCount += take;
@@ -1554,7 +1557,7 @@ namespace C99
                         }
                         if (!addOk)
                         {
-                            DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = $"⚠ 文件 {fileName} 入库失败，已跳过");
+                            DispatcherQueue.TryEnqueue(() => SetKbDbStatus($"⚠ 文件 {fileName} 入库失败，已跳过\n失败原因：{addError}", isError: true));
                             doneWeight += fileWeights[fileIndex];
                             continue;
                         }
@@ -1703,6 +1706,15 @@ namespace C99
             return vec;
         }
 
+        /// <summary>设置知识库状态文本；isError 时用醒目的警示色突出显示。</summary>
+        private void SetKbDbStatus(string text, bool isError = false)
+        {
+            KbDbStatus.Text = text;
+            KbDbStatus.Foreground = new SolidColorBrush(isError
+                ? Microsoft.UI.Colors.OrangeRed
+                : Microsoft.UI.Colors.Gray);
+        }
+
         /// <summary>隐藏"添加目录"进度条</summary>
         private void HideKbAddDirectoryProgress(string message)
         {
@@ -1711,6 +1723,7 @@ namespace C99
                 if (KbAddDirectoryProgress != null && KbAddDirectoryProgress.Visibility == Visibility.Visible)
                 {
                     KbAddDirectoryProgress.Value = 1.0;
+                    KbDbStatus.Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray);
                     KbDbStatus.Text = message;
                     KbAddDirectoryProgress.Visibility = Visibility.Collapsed;
                 }
