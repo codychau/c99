@@ -18,8 +18,9 @@ namespace C99
         {
             ("GET  /api/health",       "GET",  "/api/health",    null),
             ("POST /api/report",       "POST", "/api/report",    "{\n  \"important\": [\n    {\n      \"from\": \"张三\",\n      \"subject\": \"项目进度汇报\",\n      \"preview\": \"本周完成了核心模块开发...\",\n      \"time\": \"2024-01-15 09:30\"\n    }\n  ],\n  \"others\": \"其他常规通知邮件3封\",\n  \"emails\": \"\",\n  \"account\": \"demo@example.com\"\n}"),
+            ("POST /api/kb/query",     "POST", "/api/kb/query",  "{\n  \"question\": \"公司最近发布了哪些产品\",\n  \"top_k\": 8,\n  \"collection\": \"\"\n}"),
             ("GET  /api/config",       "GET",  "/api/config",    null),
-            ("POST /api/config",       "POST", "/api/config",    "{\n  \"port\": 9527,\n  \"autoStart\": true,\n  \"modelSource\": \"BuiltIn\",\n  \"builtInModel\": \"Local llama.cpp\",\n  \"systemPrompt\": \"你是一个专业的工作报告助手...\"\n}"),
+            ("POST /api/config",       "POST", "/api/config",    "{\n  \"port\": 9527,\n  \"autoStart\": true,\n  \"modelSource\": \"BuiltIn\",\n  \"builtInModel\": \"Local llama.cpp\",\n  \"systemPrompt\": \"你是一个专业的工作报告助手...\",\n  \"systemPromptKb\": \"你是一个知识库检索助手...\",\n  \"currentWorkflow\": \"mail_report\",\n  \"currentWorkflowKb\": \"kb_report\",\n  \"currentWorkflowMode\": 1\n}"),
             ("GET  /report/latest",    "GET",  "/report/latest", null),
         };
 

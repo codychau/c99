@@ -1017,6 +1017,37 @@ namespace C99
             KbTopKText.Text = _kbConfig.TopK.ToString();
 
             _kbInitialized = true;
+            UpdateKbActionButtonStates();
+        }
+
+        /// <summary>内置向量库数据保存目录变化时，刷新连接/添加目录按钮的可用状态</summary>
+        private void OnKbBuiltInDataDirChanged(object sender, TextChangedEventArgs e)
+        {
+            UpdateKbActionButtonStates();
+        }
+
+        /// <summary>
+        /// 按当前知识库配置刷新操作按钮可用性：
+        /// - 内置向量库且未设置数据保存目录 → 置灰「连接」「添加目录」，提示先选择目录；
+        /// - 其余情况正常可用。
+        /// </summary>
+        private void UpdateKbActionButtonStates()
+        {
+            if (KbConnectBtn == null || KbAddDirectoryBtn == null || KbDbBuiltIn == null) return;
+
+            bool builtIn = KbDbBuiltIn.IsChecked == true;
+            bool hasDataDir = builtIn
+                ? !string.IsNullOrWhiteSpace(KbBuiltInDataDir?.Text)
+                : true;
+
+            KbConnectBtn.IsEnabled = hasDataDir;
+            KbAddDirectoryBtn.IsEnabled = hasDataDir;
+
+            if (builtIn && !hasDataDir)
+            {
+                if (KbDbStatus != null)
+                    KbDbStatus.Text = "⚠ 请先设置数据保存目录";
+            }
         }
 
         private static void SelectComboByTag(Microsoft.UI.Xaml.Controls.ComboBox combo, string tag)
@@ -1073,6 +1104,7 @@ namespace C99
             bool builtIn = KbDbBuiltIn.IsChecked == true;
             KbBuiltInPanel.Visibility = builtIn ? Visibility.Visible : Visibility.Collapsed;
             KbExternalPanel.Visibility = builtIn ? Visibility.Collapsed : Visibility.Visible;
+            UpdateKbActionButtonStates();
         }
 
         private void OnKbExternalTypeChanged(object sender, SelectionChangedEventArgs e)
@@ -1085,13 +1117,26 @@ namespace C99
         private async void OnKbBrowseDataDir(object sender, RoutedEventArgs e)
         {
             var folder = await PickFolderAsync();
-            if (folder != null) KbBuiltInDataDir.Text = folder.Path;
+            if (folder != null)
+            {
+                KbBuiltInDataDir.Text = folder.Path;
+                UpdateKbActionButtonStates();
+            }
         }
 
         private async Task<bool> EnsureKbStoreConnected()
         {
             SyncKbConfigFromUI();
             _kbConfig = _config.KnowledgeBase;
+
+            // 内置向量库必须指定数据保存目录，否则不会静默回退到默认目录
+            if (_kbConfig.DbType == VectorDbType.BuiltIn && string.IsNullOrWhiteSpace(_kbConfig.BuiltInDataDir))
+            {
+                KbDbStatus.Text = "⚠ 内置向量库需要设置数据保存目录";
+                UpdateKbActionButtonStates();
+                return false;
+            }
+
             _kbStore ??= VectorStoreFactory.Create(_kbConfig);
 
             if (_kbStore.IsConnected)
@@ -3003,7 +3048,8 @@ namespace C99
         private void ApplyDreamConfigToUI()
         {
             DreamFactoryPort.Text = _dreamConfig.Port.ToString();
-            DreamFactoryWorkflowName.Text = _dreamConfig.CurrentWorkflow;
+            // 恢复当前工作流模式（主流程 / 知识库检索流程）
+            ApplyWorkflowModeButtons();
 
             foreach (ComboBoxItem item in DreamFactoryModelSource.Items)
             {
@@ -3045,7 +3091,8 @@ namespace C99
 
             PopulateCustomModelCombo();
 
-            DreamFactoryPrompt.Text = _dreamConfig.SystemPrompt;
+            DreamFactoryPrompt.Text = _dreamConfig.GetEffectiveSystemPrompt();
+            DreamFactoryWorkflowName.Text = _dreamConfig.GetWorkflowName(_dreamConfig.CurrentWorkflowMode);
 
             foreach (ComboBoxItem item in DreamFactoryEncoding.Items)
             {
@@ -3088,7 +3135,12 @@ namespace C99
             if (DreamFactoryPort == null || DreamFactoryWorkflowName == null) return;
             if (int.TryParse(DreamFactoryPort.Text, out int port) && port > 0 && port < 65536)
                 _dreamConfig.Port = port;
-            _dreamConfig.CurrentWorkflow = DreamFactoryWorkflowName.Text.Trim();
+
+            // 按当前模式保存对应的工作流名称
+            if (_dreamConfig.CurrentWorkflowMode == DreamWorkflowMode.KnowledgeBase)
+                _dreamConfig.CurrentWorkflowKb = DreamFactoryWorkflowName.Text.Trim();
+            else
+                _dreamConfig.CurrentWorkflow = DreamFactoryWorkflowName.Text.Trim();
 
             if (DreamFactoryModelSource?.SelectedItem is ComboBoxItem srcItem)
                 _dreamConfig.ModelSource = srcItem.Tag?.ToString() ?? "BuiltIn";
@@ -3103,7 +3155,12 @@ namespace C99
 
             if (DreamFactoryCustomModel?.SelectedItem is ComboBoxItem customItem)
                 _dreamConfig.CustomModelName = customItem.Tag?.ToString() ?? customItem.Content?.ToString() ?? "";
-            _dreamConfig.SystemPrompt = DreamFactoryPrompt?.Text ?? "";
+
+            // 按当前模式保存对应的 System Prompt
+            if (_dreamConfig.CurrentWorkflowMode == DreamWorkflowMode.KnowledgeBase)
+                _dreamConfig.SystemPromptKb = DreamFactoryPrompt?.Text ?? "";
+            else
+                _dreamConfig.SystemPrompt = DreamFactoryPrompt?.Text ?? "";
 
             if (DreamFactoryEncoding?.SelectedItem is ComboBoxItem encItem)
                 _dreamConfig.Base64Encoding = encItem.Tag?.ToString() ?? "auto";
@@ -3139,8 +3196,94 @@ namespace C99
             _dreamFactoryService.OnWebReportReady += ShowWebReportToast;
             _dreamFactoryService.OnPopupNotifyAsync += OnGenericPopupNotifyAsync;
             _dreamFactoryService.OnPopupConfirmAsync += OnGenericPopupConfirmAsync;
+            _dreamFactoryService.KnowledgeSearcher = SearchKnowledgeBaseAsync;
             _dreamFactoryService.Start();
             UpdateDreamFactoryStatusUI();
+        }
+
+        /// <summary>知识库检索器：把问题向量化后在指定集合中召回 TopK 片段，返回拼接文本（HTTP 后台线程调用，需编组到 UI 线程）</summary>
+        private Task<string> SearchKnowledgeBaseAsync(string question, int topK, string collection)
+        {
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            DispatcherQueue.TryEnqueue(async () =>
+            {
+                try
+                {
+                    tcs.TrySetResult(await SearchKnowledgeBaseCoreAsync(question, topK, collection));
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetResult("");
+                    Debug.WriteLine($"[知识库] 检索异常: {ex.Message}");
+                }
+            });
+            return tcs.Task;
+        }
+
+        private async Task<string> SearchKnowledgeBaseCoreAsync(string question, int topK, string? collection)
+        {
+            try
+            {
+                if (!await EnsureKbStoreConnected())
+                {
+                    Debug.WriteLine("[知识库] 未连接，无法检索");
+                    return "";
+                }
+
+                // 集合名未指定时：优先使用 UI 当前选中集合，其次取第一个集合
+                string col = string.IsNullOrWhiteSpace(collection)
+                    ? GetCurrentCollectionName()
+                    : collection.Trim();
+                if (string.IsNullOrWhiteSpace(col))
+                    col = _kbConfig.CollectionName;
+                if (string.IsNullOrWhiteSpace(col))
+                {
+                    try
+                    {
+                        var collections = await _kbStore!.ListCollectionsAsync();
+                        col = collections.FirstOrDefault() ?? "";
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[知识库] 获取集合列表失败: {ex.Message}");
+                    }
+                }
+                if (string.IsNullOrEmpty(col))
+                    return "";
+
+                float[] queryVec;
+                try
+                {
+                    queryVec = await _kbEmbedding.EmbedAsync(question, _kbConfig);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[知识库] 向量化失败: {ex.Message}");
+                    queryVec = FallbackHashEmbedding(question, _kbConfig.Dimension);
+                }
+
+                var results = await _kbStore!.SearchAsync(col, queryVec, topK);
+                if (results.Count == 0) return "";
+
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"集合: {col}");
+                for (int i = 0; i < results.Count; i++)
+                {
+                    var r = results[i];
+                    sb.AppendLine();
+                    sb.AppendLine($"【片段 {i + 1}】（相似度 {r.Score:F4}）");
+                    if (!string.IsNullOrEmpty(r.SourceFile))
+                        sb.AppendLine($"来源: {r.SourceFile}");
+                    sb.AppendLine(r.Content.Length > 800 ? r.Content[..800] + "..." : r.Content);
+                    sb.AppendLine();
+                }
+                return sb.ToString();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[知识库] 检索异常: {ex.Message}");
+                return "";
+            }
         }
 
         private void OnDreamFactoryToggle(object sender, RoutedEventArgs e)
@@ -3148,6 +3291,124 @@ namespace C99
             if (_dreamFactoryService?.IsRunning == true)
             { _dreamFactoryService.Stop(); UpdateDreamFactoryStatusUI(); }
             else { StartDreamFactoryService(); }
+        }
+
+        // ========== 工作流模式切换（主流程 / 知识库检索流程） ==========
+
+        private async void OnWorkflowMainClick(object sender, RoutedEventArgs e)
+        {
+            await SwitchWorkflowModeAsync(DreamWorkflowMode.Main);
+        }
+
+        private async void OnWorkflowKbClick(object sender, RoutedEventArgs e)
+        {
+            await SwitchWorkflowModeAsync(DreamWorkflowMode.KnowledgeBase);
+        }
+
+        /// <summary>切换工作流模式：先把当前 UI 内容存档，再加载目标模式的配置到界面</summary>
+        private async Task SwitchWorkflowModeAsync(DreamWorkflowMode mode)
+        {
+            if (_isLoadingDreamConfig) return;
+            if (_dreamConfig.CurrentWorkflowMode == mode) return;
+
+            // 1. 保存当前编辑的内容到原模式
+            UpdateDreamConfigFromUI();
+
+            // 2. 切换模式
+            _dreamConfig.CurrentWorkflowMode = mode;
+
+            // 3. 加载新模式的配置到 UI
+            try
+            {
+                _isLoadingDreamConfig = true;
+                DreamFactoryPrompt.Text = _dreamConfig.GetEffectiveSystemPrompt();
+                DreamFactoryWorkflowName.Text = _dreamConfig.GetWorkflowName(mode);
+                ApplyWorkflowModeButtons();
+            }
+            finally
+            {
+                _isLoadingDreamConfig = false;
+            }
+
+            // 4. 持久化
+            SaveDreamFactoryConfig();
+
+            // 5. 切到知识库检索流程时，检查是否已配置知识库检索动作，未配置则引导添加
+            if (mode == DreamWorkflowMode.KnowledgeBase)
+                await EnsureKbRetrievalActionAsync();
+        }
+
+        /// <summary>检查知识库检索流程的前置/后置逻辑是否配置了"调用工具→知识库"动作；都没有则弹窗引导添加到前置逻辑</summary>
+        private async Task EnsureKbRetrievalActionAsync()
+        {
+            try
+            {
+                EnsureLogicPipelineExists();
+                string wf = _dreamConfig.GetWorkflowName(DreamWorkflowMode.KnowledgeBase);
+                if (!_dreamConfig.LogicPipelines.TryGetValue(wf, out var plc))
+                    return;
+
+                bool hasKbAction(LogicPipeline? pipe)
+                {
+                    if (pipe == null || !pipe.Enabled) return false;
+                    return pipe.Actions.Any(a =>
+                        a.ActionType == "call_tool"
+                        && a.Params.TryGetValue("tool_name", out var tn)
+                        && tn == "知识库");
+                }
+
+                // 前置 + 后置所有节点都未配置知识库检索动作 → 弹窗引导
+                if (hasKbAction(plc.PreAILogic) || hasKbAction(plc.PostAILogic))
+                    return;
+
+                bool? confirmed = await ShowYesNoDialogAsync("知识库检索流程",
+                    "知识库检索流程的前置/后置逻辑中均未配置知识库检索动作。\n\n" +
+                    "是否自动在【前置】节点添加【调用工具 → 知识库】动作？\n\n" +
+                    "(你也可以手动在逻辑设计器中选择\"调用工具\"并选择工具\"知识库\")");
+                if (confirmed != true) return;
+
+                plc.PreAILogic ??= new LogicPipeline();
+                plc.PreAILogic.Enabled = true;
+                plc.PreAILogic.Actions.Add(new LogicAction
+                {
+                    ActionType = "call_tool",
+                    Params = new Dictionary<string, string> { ["tool_name"] = "知识库" }
+                });
+                SaveDreamFactoryConfig();
+                await ShowDialogAsync("已添加", "已在【前置】逻辑中添加【调用工具 → 知识库】动作。");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[知识库] 自动配置检索动作失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>刷新两模式切换按钮的高亮样式（互斥：一个按下，另一个弹起）</summary>
+        private void ApplyWorkflowModeButtons()
+        {
+            if (WorkflowMainBtn == null || WorkflowKbBtn == null) return;
+            bool isMain = _dreamConfig.CurrentWorkflowMode != DreamWorkflowMode.KnowledgeBase;
+            SetWorkflowBtnHighlight(WorkflowMainBtn, isMain);
+            SetWorkflowBtnHighlight(WorkflowKbBtn, !isMain);
+            if (WorkflowModeHint != null)
+                WorkflowModeHint.Text = isMain
+                    ? $"当前：主流程（System Prompt / 工作流 {_dreamConfig.CurrentWorkflow}）"
+                    : $"当前：知识库检索流程（System Prompt / 工作流 {_dreamConfig.CurrentWorkflowKb}）";
+        }
+
+        private void SetWorkflowBtnHighlight(Button btn, bool active)
+        {
+            if (btn == null) return;
+            btn.Background = active
+                ? new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x3B, 0x82, 0xF6))
+                : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            btn.Foreground = active
+                ? new SolidColorBrush(Microsoft.UI.Colors.White)
+                : new SolidColorBrush(Microsoft.UI.Colors.Gray);
+            btn.FontWeight = active
+                ? Microsoft.UI.Text.FontWeights.SemiBold
+                : Microsoft.UI.Text.FontWeights.Normal;
+            btn.BorderThickness = active ? new Thickness(0) : new Thickness(1);
         }
 
         private void OnMinimizeToTrayClick(object sender, RoutedEventArgs e)
@@ -3337,10 +3598,11 @@ namespace C99
         {
             UpdateDreamConfigFromUI();
             EnsureLogicPipelineExists();
-            if (_dreamConfig.LogicPipelines.TryGetValue(_dreamConfig.CurrentWorkflow, out var plc))
+            string wf = _dreamConfig.GetWorkflowName(_dreamConfig.CurrentWorkflowMode);
+            if (_dreamConfig.LogicPipelines.TryGetValue(wf, out var plc))
             {
                 plc.PreAILogic ??= new LogicPipeline();
-                var win = new LogicDesignerWindow(plc.PreAILogic, $"{_dreamConfig.CurrentWorkflow} - 前置逻辑(Pre-AI)", pipeline =>
+                var win = new LogicDesignerWindow(plc.PreAILogic, $"{wf} - 前置逻辑(Pre-AI)", pipeline =>
                 {
                     plc.PreAILogic = pipeline;
                     SaveDreamFactoryConfig();
@@ -3353,10 +3615,11 @@ namespace C99
         {
             UpdateDreamConfigFromUI();
             EnsureLogicPipelineExists();
-            if (_dreamConfig.LogicPipelines.TryGetValue(_dreamConfig.CurrentWorkflow, out var plc))
+            string wf = _dreamConfig.GetWorkflowName(_dreamConfig.CurrentWorkflowMode);
+            if (_dreamConfig.LogicPipelines.TryGetValue(wf, out var plc))
             {
                 plc.PostAILogic ??= new LogicPipeline();
-                var win = new LogicDesignerWindow(plc.PostAILogic, $"{_dreamConfig.CurrentWorkflow} - 后置逻辑(Post-AI)", pipeline =>
+                var win = new LogicDesignerWindow(plc.PostAILogic, $"{wf} - 后置逻辑(Post-AI)", pipeline =>
                 {
                     plc.PostAILogic = pipeline;
                     SaveDreamFactoryConfig();
@@ -3369,10 +3632,11 @@ namespace C99
         {
             UpdateDreamConfigFromUI();
             EnsureLogicPipelineExists();
-            if (_dreamConfig.LogicPipelines.TryGetValue(_dreamConfig.CurrentWorkflow, out var plc))
+            string wf = _dreamConfig.GetWorkflowName(_dreamConfig.CurrentWorkflowMode);
+            if (_dreamConfig.LogicPipelines.TryGetValue(wf, out var plc))
             {
                 plc.PostAction ??= new PostActionConfig();
-                var win = new PostActionSettingsWindow(plc.PostAction, _dreamConfig.CurrentWorkflow, _dreamConfig.AITools, action =>
+                var win = new PostActionSettingsWindow(plc.PostAction, wf, _dreamConfig.AITools, action =>
                 {
                     plc.PostAction = action;
                     SaveDreamFactoryConfig();
@@ -3383,8 +3647,14 @@ namespace C99
 
         private void EnsureLogicPipelineExists()
         {
-            string wf = _dreamConfig.CurrentWorkflow;
-            if (string.IsNullOrEmpty(wf)) { _dreamConfig.CurrentWorkflow = "mail_report"; wf = "mail_report"; }
+            string wf = _dreamConfig.GetWorkflowName(_dreamConfig.CurrentWorkflowMode);
+            if (string.IsNullOrEmpty(wf))
+            {
+                if (_dreamConfig.CurrentWorkflowMode == DreamWorkflowMode.KnowledgeBase)
+                { _dreamConfig.CurrentWorkflowKb = "kb_report"; wf = "kb_report"; }
+                else
+                { _dreamConfig.CurrentWorkflow = "mail_report"; wf = "mail_report"; }
+            }
             if (!_dreamConfig.LogicPipelines.ContainsKey(wf))
                 _dreamConfig.LogicPipelines[wf] = new LogicPipelineConfig();
         }

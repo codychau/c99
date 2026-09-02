@@ -34,12 +34,18 @@ namespace C99.Services
         private readonly DreamFactoryConfig _config;
         private readonly HttpClient _httpClient;
         private bool _isRunning;
+
+        /// <summary>当前请求对应的工作流模式（按监听端口判定：9527=主流程，9572=知识库检索流程）</summary>
+        private readonly AsyncLocal<DreamWorkflowMode> _requestMode = new();
         private readonly List<ReportHistoryItem> _reportHistory = new();
         private static readonly TimeSpan HistoryMaxAge = TimeSpan.FromDays(1);
         private readonly string _base64Encoding;
 
         /// <summary>指标服务（由外部注入）</summary>
         public MetricsService? Metrics { get; set; }
+
+        /// <summary>知识库检索器（由外部注入，返回检索到的上下文文本；参数为查询、TopK、集合名）</summary>
+        public Func<string, int, string, Task<string>>? KnowledgeSearcher { get; set; }
 
         /// <summary>收到新报告时触发</summary>
         public event Action<string, string>? OnReportGenerated;
@@ -135,10 +141,18 @@ namespace C99.Services
             {
                 string path = request.Url?.AbsolutePath ?? "/";
 
+                // 根据接口路径识别工作流模式：/api/report=主流程，/api/kb/=知识库检索流程
+                _requestMode.Value = path.StartsWith("/api/kb/", StringComparison.OrdinalIgnoreCase)
+                    ? DreamWorkflowMode.KnowledgeBase
+                    : DreamWorkflowMode.Main;
+
                 switch (path)
                 {
                     case "/api/report":
                         await HandleReportAsync(request, response);
+                        break;
+                    case "/api/kb/query":
+                        await HandleKbQueryAsync(request, response);
                         break;
                     case "/api/health":
                         await WriteJsonAsync(response, new { status = "ok", model = _config.GetEffectiveModelName() });
@@ -211,7 +225,8 @@ namespace C99.Services
 
             LogicPipeline? preLogic = null;
             LogicPipeline? postLogic = null;
-            if (_config.LogicPipelines.TryGetValue(_config.CurrentWorkflow, out var pipelineConfig))
+            string wfName = _config.GetWorkflowName(_requestMode.Value);
+            if (_config.LogicPipelines.TryGetValue(wfName, out var pipelineConfig))
             {
                 preLogic = pipelineConfig.PreAILogic;
                 postLogic = pipelineConfig.PostAILogic;
@@ -340,6 +355,106 @@ namespace C99.Services
             await WriteJsonAsync(response, new AIReportResponse { Summary = finalSummary });
         }
 
+        /// <summary>处理知识库检索 API：调用知识库检索工具，走知识库工作流的 AI 生成流程</summary>
+        private async Task HandleKbQueryAsync(HttpListenerRequest request, HttpListenerResponse response)
+        {
+            string body;
+            using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+                body = await reader.ReadToEndAsync();
+
+            Log($"收到知识库检索请求 ({body.Length} 字节)");
+
+            KbQueryRequest? query;
+            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            try
+            {
+                query = JsonSerializer.Deserialize<KbQueryRequest>(body, jsonOptions);
+            }
+            catch (Exception ex)
+            {
+                Log($"JSON 解析失败: {ex.Message}");
+                response.StatusCode = 400;
+                await WriteJsonAsync(response, new { error = "Invalid JSON" });
+                return;
+            }
+
+            string question = query?.Question?.Trim() ?? "";
+            if (string.IsNullOrEmpty(question))
+            {
+                await WriteJsonAsync(response, new { error = "问题不能为空" }, 400);
+                return;
+            }
+
+            // 知识库检索接口固定使用知识库检索流程，与请求端口无关
+            DreamWorkflowMode mode = DreamWorkflowMode.KnowledgeBase;
+            _requestMode.Value = mode;
+            string wfName = _config.GetWorkflowName(mode);
+            _config.LogicPipelines.TryGetValue(wfName, out var pipelineConfig);
+
+            var context = new Dictionary<string, string>
+            {
+                ["request_body"] = body,
+                ["user_prompt"] = question,
+                ["question"] = question,
+                ["kb_question"] = question,
+                ["kb_top_k"] = (query?.TopK > 0 ? query.TopK : 8).ToString(),
+                ["kb_collection"] = query?.Collection ?? "",
+                ["account"] = ""
+            };
+
+            var engine = CreateLogicEngine();
+            if (pipelineConfig?.PreAILogic != null && pipelineConfig.PreAILogic.Enabled && pipelineConfig.PreAILogic.Actions.Count > 0)
+            {
+                try
+                {
+                    Log($"[前置逻辑] 开始执行 ({pipelineConfig.PreAILogic.Actions.Count} 个动作)");
+                    await engine.ExecuteAsync(pipelineConfig.PreAILogic, context);
+                    Log($"[前置逻辑] 执行完毕");
+                }
+                catch (Exception ex)
+                {
+                    Log($"[前置逻辑] 执行异常: {ex.Message}");
+                }
+            }
+
+            string finalPrompt = context.TryGetValue("user_prompt", out var modPrompt) ? modPrompt.Trim() : question;
+
+            Log("正在调用 AI 生成知识库回答...");
+            string summary;
+            try
+            {
+                summary = await CallAIAsync(finalPrompt);
+                Log($"AI 回答已生成 ({summary.Length} 字符)");
+            }
+            catch (Exception ex)
+            {
+                Log($"AI 调用失败: {ex.Message}");
+                summary = $"AI 调用失败: {ex.Message}";
+            }
+
+            context["ai_response"] = summary;
+
+            if (pipelineConfig?.PostAILogic != null && pipelineConfig.PostAILogic.Enabled && pipelineConfig.PostAILogic.Actions.Count > 0)
+            {
+                try
+                {
+                    Log($"[后置逻辑] 开始执行 ({pipelineConfig.PostAILogic.Actions.Count} 个动作)");
+                    await engine.ExecuteAsync(pipelineConfig.PostAILogic, context);
+                    Log($"[后置逻辑] 执行完毕");
+                }
+                catch (Exception ex)
+                {
+                    Log($"[后置逻辑] 执行异常: {ex.Message}");
+                }
+            }
+
+            string finalSummary = context.TryGetValue("ai_response", out var modSummary) ? modSummary : summary;
+
+            try { Metrics?.RecordReport(); } catch { }
+
+            await WriteJsonAsync(response, new { answer = finalSummary });
+        }
+
         private LogicEngine CreateLogicEngine()
         {
             var engine = new LogicEngine();
@@ -382,6 +497,7 @@ namespace C99.Services
             };
             engine.ExecuteScriptAsync = (scriptName, args, workingDir) =>
                 ExecuteScriptInternalAsync(scriptName, args, workingDir);
+            engine.KnowledgeSearcher = KnowledgeSearcher;
             return engine;
         }
 
@@ -464,12 +580,17 @@ namespace C99.Services
             if (update != null)
             {
                 _config.Port = update.Port;
+                _config.CurrentWorkflowMode = update.CurrentWorkflowMode;
                 _config.ModelSource = update.ModelSource;
                 _config.BuiltInModel = update.BuiltInModel;
                 _config.CustomApiUrl = update.CustomApiUrl;
                 _config.CustomApiKey = update.CustomApiKey;
                 _config.CustomModelName = update.CustomModelName;
                 _config.SystemPrompt = update.SystemPrompt;
+                _config.SystemPromptKb = update.SystemPromptKb;
+                _config.CurrentWorkflow = update.CurrentWorkflow;
+                _config.CurrentWorkflowKb = update.CurrentWorkflowKb;
+                _config.LogicPipelines = update.LogicPipelines;
             }
             await WriteJsonAsync(response, new { status = "ok" });
         }
@@ -547,7 +668,7 @@ namespace C99.Services
             string apiUrl = _config.GetEffectiveApiUrl();
             string model = _config.GetEffectiveModelName();
             string apiKey = _config.GetEffectiveApiKey();
-            string systemPrompt = systemPromptOverride ?? _config.SystemPrompt;
+            string systemPrompt = systemPromptOverride ?? _config.GetSystemPrompt(_requestMode.Value);
 
             var request = new OpenAIChatRequest
             {
@@ -573,9 +694,26 @@ namespace C99.Services
                 httpRequest.Headers.Add("Authorization", $"Bearer {apiKey}");
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var httpResponse = await _httpClient.SendAsync(httpRequest);
+            HttpResponseMessage? httpResponse = null;
+            string? errorBody = null;
+            try
+            {
+                httpResponse = await _httpClient.SendAsync(httpRequest);
+            }
+            catch (HttpRequestException ex)
+            {
+                sw.Stop();
+                throw new InvalidOperationException(BuildConnectErrorMessage(apiUrl, ex));
+            }
             sw.Stop();
-            httpResponse.EnsureSuccessStatusCode();
+
+            // 非成功状态码：读取错误体并转换为带可操作提示的中文错误，而不是抛出无信息量的泛用异常
+            if (!httpResponse.IsSuccessStatusCode)
+            {
+                try { errorBody = await httpResponse.Content.ReadAsStringAsync(); } catch { }
+                throw new InvalidOperationException(
+                    BuildHttpErrorMessage((int)httpResponse.StatusCode, apiUrl, errorBody));
+            }
 
             var responseBody = await httpResponse.Content.ReadAsStringAsync();
             var chatResponse = JsonSerializer.Deserialize<OpenAIChatResponse>(responseBody);
@@ -600,6 +738,105 @@ namespace C99.Services
             catch { }
 
             return string.IsNullOrEmpty(responseText) ? "(AI 返回空内容)" : responseText;
+        }
+
+        /// <summary>连接失败（无法发起到服务端的请求）时生成可操作提示</summary>
+        private string BuildConnectErrorMessage(string apiUrl, HttpRequestException ex)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"无法连接到 AI 服务: {apiUrl}");
+            sb.AppendLine();
+            sb.AppendLine("可能的原因:");
+
+            bool local = _config.ModelSource == "BuiltIn";
+            if (local)
+            {
+                sb.AppendLine("1. 本地模型服务（llama.cpp/ollama/vllm）未启动，请先在「AI启动底座」启动对应服务");
+                sb.AppendLine($"2. 端口不正确，当前请求: {apiUrl}");
+                sb.AppendLine("3. 模型服务还在加载中，稍后重试");
+            }
+            else
+            {
+                sb.AppendLine("1. API 地址不可达或写错，当前: " + apiUrl);
+                sb.AppendLine("2. 网络不可用或服务端拒绝连接（如防火墙、代理）");
+            }
+            sb.AppendLine();
+            sb.AppendLine("可在「AI梦工厂 → AI 模型配置」中检查地址与模型，在「设置」中检查 API Key。");
+            return sb.ToString();
+        }
+
+        /// <summary>HTTP 错误状态码：读取服务端错误体，映射出已知错误的可操作提示</summary>
+        private string BuildHttpErrorMessage(int statusCode, string apiUrl, string? errorBody)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"AI 服务返回 HTTP {statusCode}（{apiUrl}）");
+
+            // 服务端错误体常为 {"error": {"message": "...", "type": "...", "code": "..."}} 或纯文本
+            string? serverMsg = null, serverCode = null;
+            if (!string.IsNullOrWhiteSpace(errorBody))
+            {
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(errorBody);
+                    if (doc.RootElement.TryGetProperty("error", out var err))
+                    {
+                        if (err.TryGetProperty("message", out var m)) serverMsg = m.GetString();
+                        if (err.TryGetProperty("code", out var c)) serverCode = c.GetString();
+                        if (err.TryGetProperty("type", out var t) && string.IsNullOrEmpty(serverMsg))
+                            serverMsg = t.GetString();
+                    }
+                }
+                catch
+                {
+                    serverMsg = errorBody.Length > 500 ? errorBody[..500] : errorBody;
+                }
+            }
+
+            sb.AppendLine();
+
+            // 根据已知错误类型给出针对性提示
+            string lower = ((serverMsg ?? "") + " " + (serverCode ?? "")).ToLowerInvariant();
+            bool hints = false;
+
+            if (statusCode == 400 || lower.Contains("context") || lower.Contains("max_tokens")
+                || lower.Contains("maximum context") || lower.Contains("exceed"))
+            {
+                hints = true;
+                sb.AppendLine("► 提示：最常见原因是「最大 Token 数(MaxTokens)」配置过大，超出模型上下文窗口。");
+                sb.AppendLine($"  当前配置 MaxTokens = {_config.MaxTokens}。请到「AI梦工厂 → 信息接收设置/模型配置」调小最大 Token 数（建议 4096、8192 等）。");
+            }
+            if (statusCode == 401 || lower.Contains("unauthorized") || lower.Contains("invalid api key")
+                || lower.Contains("authentication") || lower.Contains("invalid key"))
+            {
+                hints = true;
+                sb.AppendLine("► 提示：API Key 无效或未授权。请到「设置」检查 API Key 是否正确。");
+            }
+            if (statusCode == 404 || lower.Contains("model not found") || lower.Contains("no such model"))
+            {
+                hints = true;
+                sb.AppendLine($"► 提示：模型不存在。当前请求模型: {_config.GetEffectiveModelName()}，请确认模型名称已部署且拼写正确。");
+            }
+            if (statusCode == 429 || lower.Contains("rate limit") || lower.Contains("quota"))
+            {
+                hints = true;
+                sb.AppendLine("► 提示：请求过于频繁或额度用尽。请稍后重试，或检查账户额度。");
+            }
+            if (statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504)
+            {
+                hints = true;
+                sb.AppendLine("► 提示：服务端异常或过载，请稍后重试；若持续失败，检查模型服务状态或日志。");
+            }
+
+            if (!hints)
+                sb.AppendLine("请检查 AI 服务地址、模型名称与配置是否正确。");
+
+            if (!string.IsNullOrEmpty(serverMsg))
+            {
+                sb.AppendLine();
+                sb.AppendLine("服务端详细信息: " + (serverMsg.Length > 400 ? serverMsg[..400] + "..." : serverMsg));
+            }
+
+            return sb.ToString();
         }
 
         private void AppendFallbackSection(StringBuilder sb, string title, string? content)
@@ -923,7 +1160,7 @@ namespace C99.Services
             }
 
             // 可选：调用本地文件检索工具，把检索结果附加到上下文
-            if (_config.LogicPipelines.TryGetValue(_config.CurrentWorkflow, out var queryPc)
+            if (_config.LogicPipelines.TryGetValue(_config.GetWorkflowName(_requestMode.Value), out var queryPc)
                 && queryPc.PostAction?.AllowPageQuery == true
                 && queryPc.PostAction?.AllowPageQueryDiskSearch == true)
             {
@@ -947,7 +1184,8 @@ namespace C99.Services
             }
             catch (Exception ex)
             {
-                await WriteJsonAsync(response, new { answer_html = $"<p style='color:#e11d48;'>AI 调用失败: {System.Net.WebUtility.HtmlEncode(ex.Message)}</p>" });
+                string escaped = System.Net.WebUtility.HtmlEncode(ex.Message);
+                await WriteJsonAsync(response, new { answer_html = $"<p style='color:#e11d48;font-weight:600;'>AI 调用失败</p><pre style='white-space:pre-wrap;color:#e11d48;font-size:13px;'>{escaped}</pre>" });
             }
         }
 
@@ -1064,7 +1302,7 @@ namespace C99.Services
         /// <summary>从当前工作流后置逻辑的 search_files 动作读取检索目录</summary>
         private string GetQuerySearchFolder()
         {
-            if (!_config.LogicPipelines.TryGetValue(_config.CurrentWorkflow, out var pc))
+            if (!_config.LogicPipelines.TryGetValue(_config.GetWorkflowName(_requestMode.Value), out var pc))
                 return "";
             var action = pc.PostAILogic?.Actions?.FirstOrDefault(a => a.ActionType == "search_files");
             if (action == null) return "";
@@ -1137,7 +1375,7 @@ namespace C99.Services
 
             string summaryHtml = Markdig.Markdown.ToHtml(bodyPart);
 
-            bool showQuery = _config.LogicPipelines.TryGetValue(_config.CurrentWorkflow, out var pc)
+            bool showQuery = _config.LogicPipelines.TryGetValue(_config.GetWorkflowName(_requestMode.Value), out var pc)
                 && pc.PostAction?.AllowPageQuery == true;
 
             var sbSidebar = new StringBuilder();

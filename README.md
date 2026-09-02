@@ -52,9 +52,21 @@
 | `/api/report` | `POST` | 接收邮件 JSON 报告，触发完整处理流水线 |
 | `/api/health` | `GET` | 健康检查，返回 `{"status":"ok","model":"..."}` |
 | `/api/config` | `GET/POST` | 读取/更新梦工厂配置 |
+| `/api/kb/query` | `POST` | 知识库检索提问，走“知识库检索流程”（`{"question":"...","top_k":8,"collection":""}`，collection 可空、为空取首个集合） |
 | `/report/latest` | `GET` | HTML 网页报告查看器（带历史侧边栏） |
 
 服务默认监听 `http://localhost:9527/`，支持 CORS 跨域，可配置开机自启。
+
+> **双工作流模式**：UI 提供“主流程 / 知识库检索流程”两个互斥切换按钮，
+> System Prompt 与工作流逻辑各有一套独立配置，运行时通过接口路径区分：
+> - 主流程：`SystemPrompt` + `CurrentWorkflow`（默认 `mail_report`），对应 `/api/report`；
+> - 知识库检索流程：`SystemPromptKb` + `CurrentWorkflowKb`（默认 `kb_report`），对应 `/api/kb/query`。
+> 切换按钮时，下方 System Prompt 与工作流逻辑界面会随之刷新为对应模式的配置。
+>
+> **知识库检索的触发方式**：知识库检索并非硬编码，而是由工作流中的
+> “调用工具 (call_tool) → 知识库”动作驱动。切到“知识库检索流程”时，
+> 若前置/后置逻辑均未配置该动作，会弹窗询问是否自动在【前置】节点添加；
+> 亦可在逻辑设计器中手动添加。检索的 TopK、集合名等参数经 API 请求传入。
 
 ### 处理流水线
 

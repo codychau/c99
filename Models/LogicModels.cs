@@ -52,6 +52,9 @@ namespace C99.Models
         public Func<AIToolItem, string, Task<string>>? AnalyzeToolAsync { get; set; }
         public Func<string, string, string, Task<string>>? ExecuteScriptAsync { get; set; }
 
+        /// <summary>知识库检索器（由外部注入）：参数为(问题文本, TopK, 集合名)，返回检索结果文本</summary>
+        public Func<string, int, string, Task<string>>? KnowledgeSearcher { get; set; }
+
         private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
         public async Task<Dictionary<string, string>> ExecuteAsync(LogicPipeline? pipeline, Dictionary<string, string> context)
@@ -202,6 +205,40 @@ namespace C99.Models
                     if (tool == null)
                     {
                         await Log($"调用工具失败: 未找到工具 \"{toolName}\"");
+                        break;
+                    }
+
+                    // 知识库工具：不走脚本分析，直接调用知识库检索器
+                    if ((tool.Name == "知识库" || tool.Category == "知识库") && KnowledgeSearcher != null)
+                    {
+                        await Log("[知识库] 正在执行知识库检索...");
+                        try
+                        {
+                            string question = context.TryGetValue("kb_question", out var q) && !string.IsNullOrWhiteSpace(q)
+                                ? q
+                                : requestContext;
+                            int topK = context.TryGetValue("kb_top_k", out var t) && int.TryParse(t, out var tv) && tv > 0
+                                ? tv : 8;
+                            string collection = context.TryGetValue("kb_collection", out var c) ? c : "";
+                            await Log($"[知识库] 问题: {(question.Length > 60 ? question[..60] + "..." : question)} | TopK={topK} | 集合={(string.IsNullOrEmpty(collection) ? "(默认)" : collection)}");
+                            string kbResult = await KnowledgeSearcher(question, topK, collection) ?? "";
+                            context["kb_result"] = kbResult;
+                            if (!string.IsNullOrWhiteSpace(kbResult))
+                            {
+                                string appended = "\n\n--- 知识库检索结果 ---\n" + kbResult;
+                                if (context.TryGetValue("user_prompt", out var up))
+                                    context["user_prompt"] = up + appended;
+                                await Log($"[知识库] 检索完成，已注入上下文 ({kbResult.Length} 字符)");
+                            }
+                            else
+                            {
+                                await Log("[知识库] 检索无结果");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            await Log($"[知识库] 检索失败: {ex.Message}");
+                        }
                         break;
                     }
 

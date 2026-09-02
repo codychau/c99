@@ -104,30 +104,24 @@
                     <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
                         <StackPanel>
                             <TextBlock Text="HTTP 服务" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="端口：" VerticalAlignment="Center" FontSize="13"/>
-                                <TextBox x:Name="DreamFactoryPort" Grid.Column="1" Width="80" Height="32"
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="端口：" VerticalAlignment="Center" FontSize="13"/>
+                                <TextBox x:Name="DreamFactoryPort" Width="80" Height="32"
                                          Text="9527" FontSize="13" Margin="4,0,12,0"/>
-                                <TextBlock x:Name="DreamFactoryStatus" Grid.Column="2"
+                                <TextBlock x:Name="DreamFactoryStatus"
                                            Text="● 未启动" FontSize="13" Foreground="Gray" VerticalAlignment="Center"/>
-                                <Button x:Name="DreamFactoryToggleBtn" Grid.Column="3"
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <Button x:Name="DreamFactoryToggleBtn"
                                         Content="▶ 启动" FontSize="13" Height="32" Width="80"
                                         Click="OnDreamFactoryToggle"/>
-                                <Button x:Name="DreamFactoryTrayBtn" Grid.Column="4"
+                                <Button x:Name="DreamFactoryTrayBtn"
                                         Content="收起到托盘" FontSize="13" Height="32" Width="100"
                                         Margin="8,0,0,0" Click="OnMinimizeToTrayClick"/>
-                                <Button x:Name="DreamFactoryTestBtn" Grid.Column="5"
+                                <Button x:Name="DreamFactoryTestBtn"
                                         Content="🧪 测试" FontSize="13" Height="32" Width="80"
                                         Margin="8,0,0,0" Click="OnDreamFactoryTestClick"/>
-                            </Grid>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 
@@ -191,6 +185,28 @@
                                     <ComboBoxItem Content="Big5" Tag="big5"/>
                                 </ComboBox>
                             </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 工作流模式切换 -->
+                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="工作流模式" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="WorkflowMainBtn" Grid.Column="0"
+                                        Content="主流程" FontSize="14" Height="38"
+                                        Click="OnWorkflowMainClick"/>
+                                <Button x:Name="WorkflowKbBtn" Grid.Column="2"
+                                        Content="知识库检索流程" FontSize="14" Height="38"
+                                        Click="OnWorkflowKbClick"/>
+                            </Grid>
+                            <TextBlock x:Name="WorkflowModeHint" FontSize="12" Foreground="Gray"
+                                       Text="切换后下方 System Prompt 与工作流逻辑将切换为对应模式" Margin="0,6,0,0"/>
                         </StackPanel>
                     </Border>
 
@@ -446,7 +462,8 @@
                                                         <ColumnDefinition Width="Auto"/>
                                                     </Grid.ColumnDefinitions>
                                                     <TextBox x:Name="KbBuiltInDataDir" Grid.Column="0" Height="32" FontSize="13"
-                                                             PlaceholderText="默认：程序目录\kb_data"/>
+                                                             PlaceholderText="默认：程序目录\kb_data"
+                                                             TextChanged="OnKbBuiltInDataDirChanged"/>
                                                     <Button Grid.Column="1" Content="浏览..." FontSize="12" Height="32"
                                                             Margin="8,0,0,0" Click="OnKbBrowseDataDir"/>
                                                 </Grid>
@@ -541,8 +558,8 @@
                                                            VerticalAlignment="Center" Margin="12,0,0,0" Opacity="0.5"/>
                                                 <TextBox Grid.Column="4" x:Name="KbChunkSeparatorBox" Width="110" Height="32" FontSize="13"
                                                          Text="\r\n" Margin="4,0,0,0" IsEnabled="False"/>
-                                                <Button Grid.Column="5" Content="📁 添加目录" FontSize="12" Height="34"
-                                                         Margin="12,0,0,0" Click="OnKbAddDirectory"/>
+<Button Grid.Column="5" x:Name="KbAddDirectoryBtn" Content="📁 添加目录" FontSize="12" Height="34"
+                                                          Margin="12,0,0,0" Click="OnKbAddDirectory"/>
                                             </Grid>
 <Grid ColumnSpacing="8" Margin="0,0,0,10">
                                                  <Grid.ColumnDefinitions>

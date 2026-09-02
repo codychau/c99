@@ -13,6 +13,16 @@ namespace C99.Models
         public string Category { get; set; } = "";
     }
 
+    /// <summary>AI梦工厂工作流模式：主流程 / 知识库检索流程</summary>
+    public enum DreamWorkflowMode
+    {
+        /// <summary>主流程（默认，原有邮件报告工作流）</summary>
+        Main = 0,
+
+        /// <summary>知识库检索流程</summary>
+        KnowledgeBase = 1,
+    }
+
     /// <summary>
     /// AI梦工厂配置
     /// </summary>
@@ -20,6 +30,9 @@ namespace C99.Models
     {
         /// <summary>HTTP 服务端口</summary>
         public int Port { get; set; } = 9527;
+
+        /// <summary>当前工作流模式（UI 按钮切换，HTTP 请求按接口路径自动识别）</summary>
+        public DreamWorkflowMode CurrentWorkflowMode { get; set; } = DreamWorkflowMode.Main;
 
         /// <summary>是否自动启动 HTTP 服务</summary>
         public bool AutoStart { get; set; } = true;
@@ -48,11 +61,31 @@ namespace C99.Models
             + "格式：1) 重点关注事项（来自重要联系人的邮件）；2) 其他值得关注的信息；3) 今日工作建议。"
             + "请控制在500字以内。";
 
+        /// <summary>知识库检索流程 System Prompt</summary>
+        public string SystemPromptKb { get; set; } =
+            "你是一个知识库检索助手。请根据提供的知识库资料，用中文准确、简洁地回答用户问题。"
+            + "如果资料中找不到相关信息，请如实说明没有找到，不要编造内容。";
+
         /// <summary>逻辑管道配置（key=工作流名称）</summary>
         public Dictionary<string, LogicPipelineConfig> LogicPipelines { get; set; } = new();
 
-        /// <summary>当前使用的工作流名称</summary>
+        /// <summary>当前使用的工作流名称（主流程）</summary>
         public string CurrentWorkflow { get; set; } = "mail_report";
+
+        /// <summary>当前使用的工作流名称（知识库检索流程）</summary>
+        public string CurrentWorkflowKb { get; set; } = "kb_report";
+
+        /// <summary>获取当前模式对应的 System Prompt</summary>
+        public string GetEffectiveSystemPrompt() =>
+            CurrentWorkflowMode == DreamWorkflowMode.KnowledgeBase ? SystemPromptKb : SystemPrompt;
+
+        /// <summary>获取指定模式对应的 System Prompt</summary>
+        public string GetSystemPrompt(DreamWorkflowMode mode) =>
+            mode == DreamWorkflowMode.KnowledgeBase ? SystemPromptKb : SystemPrompt;
+
+        /// <summary>获取指定模式对应的工作流名称</summary>
+        public string GetWorkflowName(DreamWorkflowMode mode) =>
+            mode == DreamWorkflowMode.KnowledgeBase ? CurrentWorkflowKb : CurrentWorkflow;
 
         /// <summary>获取实际使用的 API URL</summary>
         public string GetEffectiveApiUrl()
@@ -123,6 +156,21 @@ namespace C99.Models
             new() { Name = "图片处理", Icon = "🖼️" },
             new() { Name = "知识库", Icon = "📚", Category = "知识库" },
         };
+    }
+
+    /// <summary>
+    /// 知识库检索请求（POST /api/kb/query）
+    /// </summary>
+    public class KbQueryRequest
+    {
+        [JsonPropertyName("question")]
+        public string Question { get; set; } = "";
+
+        [JsonPropertyName("top_k")]
+        public int TopK { get; set; } = 8;
+
+        [JsonPropertyName("collection")]
+        public string? Collection { get; set; }
     }
 
     /// <summary>
