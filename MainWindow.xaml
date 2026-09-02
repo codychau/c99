@@ -1007,6 +1007,18 @@
                                     <TextBlock Text="Tensor 拆分比例 (-ts, --tensor-split, 逗号分隔)" FontSize="13" Margin="0,0,0,4"/>
                                     <TextBox x:Name="LLamaTensorSplit" PlaceholderText="例如：3,1  (3份给GPU0,1份给GPU1)" FontSize="13" Height="34" Margin="0,0,0,10"/>
 
+                                    <!-- 可见 GPU（HIP_VISIBLE_DEVICES 过滤） -->
+                                    <TextBlock Text="对哪张显卡可见（HIP_VISIBLE_DEVICES 过滤）" FontSize="13" Margin="0,0,0,4"/>
+                                    <TextBlock Text="仅对启动的 llama.cpp 进程生效。多 AMD 卡且预编译版只带部分架构 kernel 时（如核显 gfx1036 无 kernel 导致 device kernel image is invalid），请只勾选独显。" FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,6"/>
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <ComboBox x:Name="LLamaVisibleGPU" Grid.Column="0" Height="34" FontSize="13" Margin="0,0,8,0" SelectionChanged="OnLLamaVisibleGPUChanged">
+                                            <ComboBoxItem Content="全部显卡（默认，不设过滤）" Tag="" IsSelected="True"/>
+                                        </ComboBox>
+                                        <Button Grid.Column="1" x:Name="LLamaProbeGPUsBtn" Content="🔍 探测显卡" FontSize="12" Height="34" Click="OnProbeLLamaGPUs"/>
+                                    </Grid>
+                                    <TextBlock x:Name="LLamaVisibleGPUTip" Text="提示：选「全部」时不设过滤；选单卡后该卡在进程内重排为 device 0，-mg/-dev 建议填 0 或留空。" FontSize="11" Foreground="#888" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="Collapsed"/>
+
                                     <!-- ========== 采样参数 ========== -->
                                     <TextBlock Text="── 采样参数 ──" FontSize="14" FontWeight="SemiBold" Foreground="#888" Margin="0,8,0,8"/>
 
@@ -1084,9 +1096,6 @@
                                         <TextBlock Grid.Column="3" Text="端口" VerticalAlignment="Center" FontSize="12"/>
                                         <TextBox Grid.Column="4" x:Name="LLamaPort" Text="8080" FontSize="13" Height="32"/>
                                     </Grid>
-
-                                    <!-- ========== 检测环境 ========== -->
-                                    <Button x:Name="LLamaDetectEnvBtn" Content="🔍 检测环境" FontSize="13" Height="34" Margin="0,6,0,6" HorizontalAlignment="Stretch" Click="OnLLamaDetectEnv"/>
 
                                     <!-- ========== 额外 ========== -->
                                     <TextBlock Text="── 额外参数 ──" FontSize="14" FontWeight="SemiBold" Foreground="#888" Margin="0,8,0,8"/>

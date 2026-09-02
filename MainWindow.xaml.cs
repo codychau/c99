@@ -193,7 +193,7 @@ namespace C99
         }
         private void ShowSettings() { HideAllContents(); SettingsContent.Visibility = Visibility.Visible; LoadSettingsExternalLLMConfig(); }
         private void ShowAbout() { HideAllContents(); AboutContent.Visibility = Visibility.Visible; }
-        private void ShowAIBase() { HideAllContents(); AIBaseContent.Visibility = Visibility.Visible; }
+        private void ShowAIBase() { HideAllContents(); AIBaseContent.Visibility = Visibility.Visible; TryAutoProbeVisibleGPUs(); }
 
         private void OnHomeClick(object sender, RoutedEventArgs e) => ShowHome();
         private void OnAIDreamFactoryClick(object sender, RoutedEventArgs e) => ShowAIDreamFactory();
@@ -284,6 +284,9 @@ namespace C99
                 dict["LLamaMainGPU"] = LLamaMainGPU.Text;
                 dict["LLamaDevice"] = LLamaDevice.Text;
                 dict["LLamaTensorSplit"] = LLamaTensorSplit.Text;
+                // 下拉尚未探测填充时，保留上次保存值，避免误清空
+                string visibleTag = (LLamaVisibleGPU.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
+                dict["LLamaVisibleGPU"] = _visibleGpuUILoaded ? visibleTag : GetSavedVisibleGPU();
                 dict["LLamaTemperature"] = LLamaTemperature.Text;
                 dict["LLamaTopK"] = LLamaTopK.Text;
                 dict["LLamaTopP"] = LLamaTopP.Text;
@@ -2547,6 +2550,22 @@ namespace C99
 
             string args = string.Join(" ", argsList);
 
+            // ---- 进程级 GPU 可见性过滤（HIP_VISIBLE_DEVICES） ----
+            string visibleTag = (LLamaVisibleGPU.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
+            Dictionary<string, string>? env = null;
+            if (!string.IsNullOrWhiteSpace(visibleTag))
+            {
+                // 多值（逗号分隔）保留原样，如 "1,2"
+                string hipValue = string.Join(",", visibleTag.Split(',')
+                    .Select(s => s.Trim())
+                    .Where(s => int.TryParse(s, out _)));
+                if (!string.IsNullOrEmpty(hipValue))
+                {
+                    env = new Dictionary<string, string> { ["HIP_VISIBLE_DEVICES"] = hipValue };
+                    AppendLog($"🎯 可见显卡: 仅 HIP_VISIBLE_DEVICES={hipValue}（仅作用于本次启动的进程，进程内序号将重排从 0 开始）");
+                }
+            }
+
             AppendLog($"程序: {mainExe}");
             AppendLog($"参数: {args}");
             if (isServer)
@@ -2556,7 +2575,7 @@ namespace C99
                 AppendLog($"🌐 浏览器访问: http://{host}:{port}");
             }
 
-            await StartProcessAsync(mainExe, args);
+            await StartProcessAsync(mainExe, args, env);
         }
 
         private string FindLLamaExe()
@@ -2595,94 +2614,181 @@ namespace C99
             return string.Empty;
         }
 
-        // ==================== llama.cpp 环境检测 ====================
+        // ---- llama.cpp 可见 GPU（HIP_VISIBLE_DEVICES 过滤） ----
 
-        private async void OnLLamaDetectEnv(object sender, RoutedEventArgs e)
+        private bool _visibleGpuPopulating;
+        private bool _visibleGpuUILoaded;
+        private bool _visibleGpuAutoProbeDone;
+
+        /// <summary>解析 --list-devices 输出，返回 (总线前缀, 索引, 名称)</summary>
+        private async Task<List<(string Bus, int Index, string Name)>> DetectLlamaGpusAsync(string exe)
+        {
+            var result = new List<(string, int, string)>();
+            string output = await RunAndCaptureAsync(exe, "--list-devices", 15000);
+
+            bool primaryMatched = false;
+            foreach (var raw in output.Split('\n'))
+            {
+                string line = raw.Trim();
+                var m = System.Text.RegularExpressions.Regex.Match(line, @"^(?<bus>[A-Za-z_][A-Za-z0-9_]*?)(?<idx>\d+):\s*(?<name>.+)$");
+                if (!m.Success) continue;
+                string name = StripDeviceMemSuffix(m.Groups["name"].Value.Trim());
+                result.Add((m.Groups["bus"].Value, int.Parse(m.Groups["idx"].Value), name));
+                primaryMatched = true;
+            }
+
+            // 兜底：某些构建输出形如 "Device 0: ..."
+            if (!primaryMatched)
+            {
+                foreach (var raw in output.Split('\n'))
+                {
+                    string line = raw.Trim();
+                    var m = System.Text.RegularExpressions.Regex.Match(line, @"^Device\s*(?<idx>\d+):\s*(?<name>.+)$");
+                    if (!m.Success) continue;
+                    result.Add(("GPU", int.Parse(m.Groups["idx"].Value), StripDeviceMemSuffix(m.Groups["name"].Value.Trim())));
+                }
+            }
+            return result;
+        }
+
+        private static string StripDeviceMemSuffix(string name)
+        {
+            int paren = name.LastIndexOf(" (", StringComparison.Ordinal);
+            if (paren > 0) return name.Substring(0, paren).Trim();
+            return name;
+        }
+
+        /// <summary>从配置读取上次保存的可见 GPU（物理序号，空=全部）</summary>
+        private string GetSavedVisibleGPU()
+        {
+            if (_config != null && _config.EngineParams.TryGetValue("LLamaVisibleGPU", out var v))
+                return (v ?? "").Trim();
+            return "";
+        }
+
+        /// <summary>重建下拉项并恢复选择</summary>
+        private void PopulateVisibleGPUList(List<(string Bus, int Index, string Name)> gpus, string selected)
+        {
+            _visibleGpuPopulating = true;
+            try
+            {
+                LLamaVisibleGPU.Items.Clear();
+                LLamaVisibleGPU.Items.Add(new ComboBoxItem { Content = "全部显卡（默认，不设过滤）", Tag = "" });
+
+                foreach (var g in gpus)
+                    LLamaVisibleGPU.Items.Add(new ComboBoxItem { Content = $"仅 {g.Bus}{g.Index}: {g.Name}", Tag = g.Index.ToString() });
+
+                if (gpus.Count == 0)
+                    LLamaVisibleGPU.Items.Add(new ComboBoxItem { Content = "（未探测到显卡，可检查启动器目录）", Tag = "" });
+
+                int sel = 0;
+                if (!string.IsNullOrEmpty(selected))
+                {
+                    for (int i = 1; i < LLamaVisibleGPU.Items.Count; i++)
+                    {
+                        if ((LLamaVisibleGPU.Items[i] as ComboBoxItem)?.Tag?.ToString() == selected) { sel = i; break; }
+                    }
+                    if (sel == 0)
+                    {
+                        LLamaVisibleGPU.Items.Add(new ComboBoxItem { Content = $"仅 GPU {selected}（上次选择，当前未探测到）", Tag = selected });
+                        sel = LLamaVisibleGPU.Items.Count - 1;
+                    }
+                }
+                LLamaVisibleGPU.SelectedIndex = sel;
+                UpdateVisibleGPUTip();
+            }
+            finally
+            {
+                _visibleGpuPopulating = false;
+                _visibleGpuUILoaded = true;
+            }
+        }
+
+        private void UpdateVisibleGPUTip()
+        {
+            if (LLamaVisibleGPUTip == null) return;
+            string tag = (LLamaVisibleGPU.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
+            if (string.IsNullOrEmpty(tag))
+                LLamaVisibleGPUTip.Visibility = Visibility.Collapsed;
+            else
+            {
+                LLamaVisibleGPUTip.Text = "提示：选单卡后该卡在进程内重排为 device 0，-mg/-dev 建议填 0 或留空。";
+                LLamaVisibleGPUTip.Visibility = Visibility.Visible;
+            }
+        }
+
+        private void ShowVisibleGPUTip(string message)
+        {
+            if (LLamaVisibleGPUTip == null) return;
+            LLamaVisibleGPUTip.Text = message;
+            LLamaVisibleGPUTip.Visibility = Visibility.Visible;
+        }
+
+        private async void OnProbeLLamaGPUs(object sender, RoutedEventArgs e)
         {
             string exe = FindLLamaExe();
             if (string.IsNullOrEmpty(exe))
             {
-                await ShowDialogAsync("错误", "未找到 llama.cpp 可执行文件，请先设置「启动器工作目录」");
+                ShowVisibleGPUTip("⚠️ 未找到 llama.cpp 可执行文件，请先在「启动器工作目录」设置正确目录");
+                await ShowDialogAsync("提示", "未找到 llama.cpp 可执行文件，请先在「启动器工作目录」设置正确目录");
                 return;
             }
 
-            // 禁用按钮防重复点击
-            LLamaDetectEnvBtn.IsEnabled = false;
-            LLamaDetectEnvBtn.Content = "⏳ 检测中...";
-
+            LLamaProbeGPUsBtn.IsEnabled = false;
+            LLamaProbeGPUsBtn.Content = "⏳ 探测中...";
             try
             {
-                var output = new System.Text.StringBuilder();
-                output.AppendLine("═══════════════════════════════════════");
-                output.AppendLine("  llama.cpp 环境检测报告");
-                output.AppendLine("═══════════════════════════════════════");
-                output.AppendLine();
+                // 放到后台线程执行，避免阻塞 UI；内部会调用 llama-server.exe --list-devices
+                var gpus = await Task.Run(() => DetectLlamaGpusAsync(exe));
+                PopulateVisibleGPUList(gpus, GetSavedVisibleGPU());
 
-                // 1. 基本信息
-                output.AppendLine($"可执行文件: {exe}");
-                output.AppendLine($"文件大小: {FormatFileSize(new FileInfo(exe).Length)}");
-                string exeDir = Path.GetDirectoryName(exe) ?? "";
-                output.AppendLine($"所在目录: {exeDir}");
-                output.AppendLine();
-
-                // 2. 列出设备 (--list-devices)
-                output.AppendLine("── [设备列表] ──");
-                string deviceOutput = await RunAndCaptureAsync(exe, "--list-devices");
-                output.AppendLine(string.IsNullOrWhiteSpace(deviceOutput) ? "(无输出)" : deviceOutput);
-                output.AppendLine();
-
-                // 3. 系统 GPU 环境变量
-                output.AppendLine("── [系统环境] ──");
-                foreach (var key in new[] { "CUDA_VISIBLE_DEVICES", "CUDA_PATH", "CUDA_HOME", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES" })
+                if (gpus.Count == 0)
+                    ShowVisibleGPUTip("⚠️ 未探测到可用显卡（--list-devices 无有效输出），请检查启动器目录是否为正确的 llama.cpp 构建");
+                else
                 {
-                    string? val = Environment.GetEnvironmentVariable(key);
-                    output.AppendLine($"  {key} = {val ?? "(未设置)"}");
+                    UpdateVisibleGPUTip();
+                    // 展开下拉，让用户立即看到探测到的显卡
+                    LLamaVisibleGPU.IsDropDownOpen = true;
                 }
-                output.AppendLine($"  PATH 含 CUDA: {(Environment.GetEnvironmentVariable("PATH")?.Contains("CUDA") == true ? "是" : "否")}");
-                output.AppendLine($"  PATH 含 ROCM: {(Environment.GetEnvironmentVariable("PATH")?.Contains("ROCm") == true ? "是" : "否")}");
-                output.AppendLine();
-
-                // 4. 显示版本信息 (--version)
-                output.AppendLine("── [版本信息] ──");
-                string versionOut = await RunAndCaptureAsync(exe, "--version");
-                output.AppendLine(string.IsNullOrWhiteSpace(versionOut) ? "(无输出)" : versionOut);
-                output.AppendLine();
-
-                output.AppendLine("═══════════════════════════════════════");
-                output.AppendLine("检测完成");
-
-                // 弹出小窗展示结果
-                var dialog = new ContentDialog
-                {
-                    Title = "llama.cpp 环境检测",
-                    CloseButtonText = "关闭",
-                    XamlRoot = this.Content.XamlRoot,
-                    Content = new ScrollViewer
-                    {
-                        MaxHeight = 500,
-                        MinWidth = 560,
-                        Content = new TextBlock
-                        {
-                            Text = output.ToString(),
-                            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
-                            FontSize = 12,
-                            TextWrapping = TextWrapping.Wrap,
-                            Padding = new Thickness(12)
-                        }
-                    }
-                };
-                await dialog.ShowAsync();
             }
             catch (Exception ex)
             {
-                await ShowDialogAsync("检测失败", ex.Message);
+                ShowVisibleGPUTip($"⚠️ 探测失败: {ex.Message}");
+                await ShowDialogAsync("探测失败", ex.Message);
             }
             finally
             {
-                LLamaDetectEnvBtn.IsEnabled = true;
-                LLamaDetectEnvBtn.Content = "🔍 检测环境";
+                LLamaProbeGPUsBtn.IsEnabled = true;
+                LLamaProbeGPUsBtn.Content = "🔍 探测显卡";
             }
         }
+
+        private void OnLLamaVisibleGPUChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateVisibleGPUTip();
+            if (_visibleGpuPopulating) return;
+            MarkParamsDirty();
+        }
+
+        /// <summary>进入 AI底座页面时自动探测一次（失败静默，可手动点按钮）</summary>
+        private async void TryAutoProbeVisibleGPUs()
+        {
+            if (_visibleGpuAutoProbeDone) return;
+            string exe = FindLLamaExe();
+            if (string.IsNullOrEmpty(exe)) return;
+            _visibleGpuAutoProbeDone = true;
+            try
+            {
+                var gpus = await Task.Run(() => DetectLlamaGpusAsync(exe));
+                PopulateVisibleGPUList(gpus, GetSavedVisibleGPU());
+            }
+            catch
+            {
+                _visibleGpuAutoProbeDone = false;
+            }
+        }
+
+        // ==================== llama.cpp 环境检测 ====================
 
         // ---- vllm 运行 ----
         private async Task RunVLLM()
@@ -2848,7 +2954,7 @@ namespace C99
         }
 
         // ---- 通用进程启动 ----
-        private async Task StartProcessAsync(string fileName, string arguments)
+        private async Task StartProcessAsync(string fileName, string arguments, Dictionary<string, string>? env = null)
         {
             await Task.Run(() =>
             {
@@ -2863,6 +2969,18 @@ namespace C99
                         RedirectStandardError = true,
                         CreateNoWindow = true
                     };
+
+                    // 注入进程级环境变量（如 HIP_VISIBLE_DEVICES），避免影响父进程
+                    if (env != null)
+                    {
+                        foreach (var kv in env)
+                        {
+                            if (string.IsNullOrEmpty(kv.Value))
+                                psi.Environment.Remove(kv.Key);
+                            else
+                                psi.Environment[kv.Key] = kv.Value;
+                        }
+                    }
 
                     var process = new Process { StartInfo = psi };
                     _runningProcess = process;
@@ -2947,20 +3065,6 @@ namespace C99
             // 确保异步读取完成
             await Task.Delay(200);
             return sb.ToString();
-        }
-
-        /// <summary>格式化文件大小</summary>
-        private string FormatFileSize(long bytes)
-        {
-            string[] units = { "B", "KB", "MB", "GB", "TB" };
-            int unitIdx = 0;
-            double size = bytes;
-            while (size >= 1024 && unitIdx < units.Length - 1)
-            {
-                size /= 1024;
-                unitIdx++;
-            }
-            return $"{size:F2} {units[unitIdx]}";
         }
 
         // ==================== 通用对话框（WinUI3 兼容） ====================
