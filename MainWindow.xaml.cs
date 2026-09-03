@@ -59,10 +59,14 @@ namespace C99
         private KnowledgeBaseConfig _kbConfig = new();
         private bool _kbInitialized;
         private bool _kbAddDirectoryBusy;
-        private string? _currentDocId;
-        private List<KnowledgeChunk> _kbAllChunks = new();
         private CancellationTokenSource? _kbScanCts;
         private CancellationTokenSource? _kbSkipFileCts;
+
+        // ========== 知识库切片悬停预览 ==========
+        private DispatcherTimer? _kbHoverTimer;
+        private object? _kbHoverItem;
+        private bool _kbPreviewShowing;
+        private bool _kbPreviewFadingOut;
 
         public MainWindow()
         {
@@ -1217,7 +1221,7 @@ namespace C99
             _kbStore = null;
             KbDbStatus.Text = "未连接";
             KbCollectionSelect.Items.Clear();
-            KbDocsList.Items.Clear();
+            KbDocsTree.ItemsSource = null;
             KbDocCount.Text = "文档列表";
             SaveKbConfig();
         }
@@ -1720,6 +1724,57 @@ namespace C99
             public KbAddDirectoryResult(int files, int chunks, int skipped) { Files = files; Chunks = chunks; Skipped = skipped; }
         }
 
+        /// <summary>文档树节点（对应一个源文件分组）</summary>
+        private sealed class KbDocNodeInfo
+        {
+            /// <summary>分组用的显示名称（源文件名）</summary>
+            public string Name = "";
+            /// <summary>该文档的全部切片 Id</summary>
+            public List<string> ChunkIds = new();
+            /// <summary>子节点（切片列表）</summary>
+            public List<KbChunkNodeInfo> Children { get; } = new();
+
+            public string Icon => "📄";
+            public string Main => Name.Length > 32 ? Name[..32] + "…" : Name;
+            public string Sub => $"{Children.Count} 段";
+        }
+
+        /// <summary>切片树节点（对应集合中的一段）</summary>
+        private sealed class KbChunkNodeInfo
+        {
+            public string Id = "";
+            public string Preview = "";
+            public string FullContent = "";
+            public string SourceFile = "";
+            public int ChunkIndex;
+            public int ChunkTotal;
+
+            public string Icon => "🔹";
+            public string Main => $"{ChunkIndex}/{ChunkTotal} · {Preview}";
+            public string Sub => $"({FullContent.Length})";
+            /// <summary>叶子节点：无子项</summary>
+            public List<KbChunkNodeInfo>? Children { get; } = null;
+        }
+
+        /// <summary>把文本压缩成单行并截断：去掉换行/制表符等空白，超长时加省略号，用于树节点显示不撑高列表行</summary>
+        private static string FlattenSingleLine(string text, int maxLen)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            var sb = new System.Text.StringBuilder(text.Length);
+            bool prevSpace = false;
+            foreach (char ch in text)
+            {
+                if (char.IsWhiteSpace(ch))
+                {
+                    if (!prevSpace) { sb.Append(' '); prevSpace = true; }
+                }
+                else { sb.Append(ch); prevSpace = false; }
+            }
+            string flat = sb.ToString().Trim();
+            if (flat.Length <= maxLen) return flat;
+            return flat.Substring(0, maxLen).TrimEnd() + "…";
+        }
+
         /// <summary>
         /// 按段落或固定长度切分文本为片段。
         /// 段落模式下先按分隔符分段，再对超长段落按 chunkSize 二次切分，保证每个片段不超过限制。
@@ -1809,18 +1864,25 @@ namespace C99
 
         private async Task RefreshKbDocsAsync(string? collectionName = null)
         {
+            _kbHoverItem = null;
+            _kbHoverTimer?.Stop();
+            if (_kbPreviewShowing)
+            {
+                _kbPreviewShowing = false;
+                KbChunkPreviewPopup.IsOpen = false;
+                _kbPreviewFadingOut = false;
+            }
+
             if (_kbStore == null || !_kbStore.IsConnected)
             {
-                KbDocsList.Items.Clear();
+                KbDocsTree.ItemsSource = null;
                 KbDocCount.Text = "文档列表";
-                ResetKbPreview();
                 return;
             }
             string name = collectionName ?? GetCurrentCollectionName();
             if (string.IsNullOrEmpty(name)) return;
 
             var all = await _kbStore.GetAllAsync(name);
-            _kbAllChunks = all;
 
             // 旧数据（未记录 chunk_index）按同源文件分组后的顺序编号，作为段号兜底
             var grpIndex = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
@@ -1833,43 +1895,67 @@ namespace C99
                 grpIndex[grp.Key] = idxMap;
             }
 
-            KbDocsList.Items.Clear();
-            int filteredOut = 0;
-            foreach (var c in all)
+            var docItems = new List<KbDocNodeInfo>();
+            var filteredOut = 0;
+
+            // 按源文件分组，每组作为一个「文档」根节点，组内的切片作为子节点
+            var groups = all
+                .Where(c => !string.IsNullOrWhiteSpace(c.Content) && !string.IsNullOrEmpty(c.Id))
+                .GroupBy(GetKbSourceFile, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var grp in groups)
             {
-                // 排除无内容的无效条目（空 content 无法提供任何可读信息）
-                if (string.IsNullOrWhiteSpace(c.Content) || string.IsNullOrEmpty(c.Id))
+                string fileName = grp.Key;
+                var chunks = grp
+                    .OrderBy(c => GetChunkIndex(c, fileName, grpIndex))
+                    .ThenBy(c => c.CreatedAt)
+                    .ToList();
+                if (chunks.Count == 0) continue;
+
+                var docInfo = new KbDocNodeInfo { Name = fileName };
+                foreach (var c in chunks)
+                    docInfo.ChunkIds.Add(c.Id);
+
+                for (int i = 0; i < chunks.Count; i++)
                 {
-                    filteredOut++;
-                    continue;
+                    var c = chunks[i];
+                    int chunkIndex = GetChunkIndex(c, fileName, grpIndex) + 1;
+                    string preview = FlattenSingleLine(c.Content, 48);
+                    docInfo.Children.Add(new KbChunkNodeInfo
+                    {
+                        Id = c.Id,
+                        Preview = preview,
+                        FullContent = c.Content,
+                        SourceFile = fileName,
+                        ChunkIndex = chunkIndex,
+                        ChunkTotal = chunks.Count
+                    });
                 }
 
-                string fileName = GetKbSourceFile(c);
-                int chunkIndex = 0;
-                if (c.Metadata.TryGetValue("chunk_index", out var ci) && int.TryParse(ci, out var idx) && idx >= 0)
-                    chunkIndex = idx;
-                else if (grpIndex.TryGetValue(fileName, out var im) && im.TryGetValue(c.Id, out var gi))
-                    chunkIndex = gi;
-
-                const int maxTitle = 30;
-                string title = c.Content.Length <= maxTitle ? c.Content : c.Content[..maxTitle] + "…";
-
-                KbDocsList.Items.Add(new
-                {
-                    Id = c.Id,
-                    Title = title,
-                    Preview = $"{fileName} · 第 {chunkIndex + 1} 段 · {c.Content.Length} 字符",
-                    FullContent = c.Content,
-                    SourceFile = c.SourceFile,
-                    ChunkIndex = chunkIndex,
-                    FileName = fileName
-                });
+                docItems.Add(docInfo);
             }
+
+            KbDocsTree.ItemsSource = docItems;
+            int validCount = docItems.Sum(d => d.Children.Count);
             long count = await _kbStore.CountAsync(name);
             string filterSuffix = filteredOut > 0 ? $"（已排除 {filteredOut} 条无内容记录）" : "";
-            KbDocCount.Text = $"文档列表（{count} 条 · 集合 {name}）{filterSuffix}";
-            ResetKbPreview();
+            KbDocCount.Text = $"文档列表（{docItems.Count} 个文档 · {validCount} 个切片 · 集合 {name}）{filterSuffix}";
         }
+
+        /// <summary>计算切片在源文件中的序号（优先 metadata chunk_index，其次分组兜底序号）</summary>
+        private static int GetChunkIndex(KnowledgeChunk c, string fileName,
+            Dictionary<string, Dictionary<string, int>> grpIndex)
+        {
+            if (c.Metadata.TryGetValue("chunk_index", out var ci) && int.TryParse(ci, out var idx) && idx >= 0)
+                return idx;
+            if (grpIndex.TryGetValue(fileName, out var im) && im.TryGetValue(c.Id, out var gi))
+                return gi;
+            return 0;
+        }
+
+        /// <summary>从 TreeViewNode 的 Content 取得数据对象（ItemsSource 绑定模式下 Content 即数据对象）</summary>
+        private static object? GetKbNodeData(TreeViewNode? node)
+            => node?.Content;
 
         /// <summary>
         /// 从切片元数据中解析源文件名，兼容多种 metadata 键名
@@ -1885,95 +1971,187 @@ namespace C99
             return "(未知来源)";
         }
 
-        /// <summary>重置切片预览为初始状态</summary>
-        private void ResetKbPreview()
+        /// <summary>删除选中项：文档节点删除整篇文档（该源文件全部切片），切片节点仅删除该切片；支持多选</summary>
+        private async void OnKbDeleteSelected(object sender, RoutedEventArgs e)
         {
-            _currentDocId = null;
-            KbPreviewTitle.Text = "请选择文档以预览切片";
-            KbPreviewText.Text = "";
-            KbPreviewSource.Text = "—";
-            KbPreviewChunkCount.Text = "—";
-            KbDeleteCurrentChunk.IsEnabled = false;
-        }
-
-        private async void OnKbDocsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (KbDocsList.SelectedItem == null)
+            var selected = KbDocsTree.SelectedNodes?.ToList() ?? new List<TreeViewNode>();
+            if (selected.Count == 0)
             {
-                ResetKbPreview();
+                await ShowDialogAsync("提示", "请先在树中选择要删除的文档或切片");
                 return;
             }
-            var sel = (dynamic)KbDocsList.SelectedItem;
-            string id = sel.Id;
+
+            // 中文语义化描述选中内容
+            var parts = new List<string>();
+            int docCount = selected.Count(s => GetKbNodeData(s) is KbDocNodeInfo);
+            int chunkCount = selected.Count(s => GetKbNodeData(s) is KbChunkNodeInfo);
+            if (docCount > 0) parts.Add($"{docCount} 篇文档");
+            if (chunkCount > 0) parts.Add($"{chunkCount} 个切片");
+            string desc = string.Join("、", parts);
+
+            bool? result = await ShowYesNoDialogAsync("删除选中", $"确定删除选中的 {desc} 吗？\n此操作不可恢复。");
+            if (result != true) return;
+
             string name = GetCurrentCollectionName();
             if (string.IsNullOrEmpty(name)) return;
             if (_kbStore == null || !_kbStore.IsConnected) return;
 
-            string content, source;
-            try
+            int docDeleted = 0, chunkDeleted = 0;
+            foreach (var node in selected)
             {
-                content = await _kbStore.GetContentAsync(name, id);
-                source = await _kbStore.GetSourceFileAsync(name, id);
+                if (GetKbNodeData(node) is KbDocNodeInfo doc)
+                {
+                    // 删除整篇文档：遍历该文档全部切片 Id 逐个删除（规避各后端 DeleteByMetadataAsync 支持差异）
+                    foreach (var id in doc.ChunkIds)
+                    {
+                        try { await _kbStore.DeleteAsync(name, id); } catch { }
+                    }
+                    docDeleted++;
+                }
+                else if (GetKbNodeData(node) is KbChunkNodeInfo chunk)
+                {
+                    try { await _kbStore.DeleteAsync(name, chunk.Id); } catch { }
+                    chunkDeleted++;
+                }
             }
-            catch
-            {
-                content = (string)sel.FullContent;
-                source = (string)(sel.SourceFile ?? "");
-            }
-            _currentDocId = id;
-            KbPreviewTitle.Text = (string)sel.Title;
-            KbPreviewText.Text = content;
-            KbPreviewSource.Text = string.IsNullOrEmpty(source) ? "—" : source;
 
-            // 同源文件的切片计数：与当前切片共享同一来源 metadata 的条目数
-            string? srcKey = null;
-            var match = _kbAllChunks.FirstOrDefault(c => c.Id == id);
-            if (match != null)
-            {
-                match.Metadata.TryGetValue("path", out var p1);
-                match.Metadata.TryGetValue("source", out var p2);
-                srcKey = string.IsNullOrEmpty(p1) ? p2 : p1;
-            }
-            int total = 1;
-            if (!string.IsNullOrEmpty(srcKey))
-                total = _kbAllChunks.Count(c =>
-                    (((c.Metadata.TryGetValue("path", out var sp) && !string.IsNullOrEmpty(sp)) ? sp.ToLowerInvariant() : null)
-                        ?? (c.Metadata.TryGetValue("source", out var ss) ? ss.ToLowerInvariant() : null)) == srcKey.ToLowerInvariant());
-            KbPreviewChunkCount.Text = total.ToString();
-            KbDeleteCurrentChunk.IsEnabled = true;
-        }
-
-        private async void OnKbDeleteCurrentChunk(object sender, RoutedEventArgs e)
-        {
-            if (_currentDocId == null || KbDocsList.SelectedItem == null)
-            {
-                await ShowDialogAsync("提示", "请先在列表中选择要删除的切片");
-                return;
-            }
-            string id = _currentDocId;
-            string name = GetCurrentCollectionName();
-            bool ok = await _kbStore!.DeleteAsync(name, id);
-            KbDbStatus.Text = ok ? $"✅ 已删除切片 {id}" : "❌ 删除切片失败";
-            KbDocsList.SelectedItem = null;
+            var sb = new System.Text.StringBuilder("🗑 已删除 ");
+            if (docDeleted > 0) sb.Append($"{docDeleted} 篇文档 ");
+            if (chunkDeleted > 0) sb.Append($"{chunkDeleted} 个切片");
+            KbDbStatus.Text = sb.ToString().Trim();
             await RefreshKbDocsAsync(name);
             SaveKbConfig();
         }
 
-        private async void OnKbDeleteDoc(object sender, RoutedEventArgs e)
+        // ==================== 知识库切片悬停预览 ====================
+
+        /// <summary>切片节点悬停：停留满 2 秒后显示弹出预览（仅切片节点触发，文档节点忽略）</summary>
+        private void OnKbChunkPointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
         {
-            if (KbDocsList.SelectedItem == null)
+            if ((sender as FrameworkElement)?.DataContext is not KbChunkNodeInfo info)
             {
-                await ShowDialogAsync("提示", "请先在列表中选择要删除的文档");
+                _kbHoverItem = null;
+                _kbHoverTimer?.Stop();
                 return;
             }
-            var sel = (dynamic)KbDocsList.SelectedItem;
-            string id = sel.Id;
-            KbDocsList.SelectedItem = null;
-            string name = GetCurrentCollectionName();
-            bool ok = await _kbStore!.DeleteAsync(name, id);
-            KbDbStatus.Text = ok ? $"✅ 已删除文档 {id}" : "❌ 删除失败";
-            await RefreshKbDocsAsync(name);
-            SaveKbConfig();
+            _kbHoverItem = info;
+            _kbHoverTimer?.Stop();
+            _kbHoverTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
+            var pos = e.GetCurrentPoint(this.Content).Position;
+            _kbHoverTimer.Tick += (_, _) =>
+            {
+                _kbHoverTimer?.Stop();
+                if (_kbHoverItem is KbChunkNodeInfo cur)
+                    ShowKbChunkPreview(cur, pos);
+            };
+            _kbHoverTimer.Start();
+        }
+
+        /// <summary>切片节点移出：取消计时；若预览正在显示则快速渐出关闭</summary>
+        private void OnKbChunkPointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        {
+            _kbHoverItem = null;
+            _kbHoverTimer?.Stop();
+            if (_kbPreviewShowing && !_kbPreviewFadingOut)
+                HideKbChunkPreview();
+        }
+
+        /// <summary>显示悬停预览弹出层（亚克力圆角卡片，淡入淡出动画）</summary>
+        private void ShowKbChunkPreview(KbChunkNodeInfo info, Windows.Foundation.Point pos)
+        {
+            KbChunkPreviewTag.Text = $"{info.Icon} 切片 {info.ChunkIndex}/{info.ChunkTotal}";
+            KbChunkPreviewTitle.Text = info.SourceFile;
+            KbChunkPreviewBody.Text = info.FullContent;
+            ApplyKbPreviewTheme();
+
+            // 定位到鼠标右下方，贴近窗口边缘时回落到左上方
+            var root = this.Content as FrameworkElement;
+            double winW = root?.ActualWidth ?? 1200;
+            double winH = root?.ActualHeight ?? 800;
+            double x = pos.X + 14, y = pos.Y + 16;
+            if (x + 420 > winW) x = pos.X - 424;
+            if (y + 320 > winH) y = pos.Y - 336;
+            if (x < 0) x = 0;
+            if (y < 0) y = 0;
+            KbChunkPreviewPopup.HorizontalOffset = x;
+            KbChunkPreviewPopup.VerticalOffset = y;
+
+            _kbPreviewFadingOut = false;
+            _kbPreviewShowing = true;
+            if (!KbChunkPreviewPopup.IsOpen)
+            {
+                KbChunkPreviewCard.Opacity = 0;
+                KbChunkPreviewPopup.IsOpen = true;
+            }
+            AnimateKbPreviewOpacity(1, 220);
+        }
+
+        /// <summary>快速渐出关闭预览</summary>
+        private void HideKbChunkPreview()
+        {
+            if (!_kbPreviewShowing) return;
+            _kbPreviewShowing = false;
+            _kbPreviewFadingOut = true;
+            AnimateKbPreviewOpacity(0, 120);
+        }
+
+        /// <summary>KbChunkPreviewCard 透明度动画；to&lt;=0 动画结束后关闭 Popup</summary>
+        private void AnimateKbPreviewOpacity(double to, int ms)
+        {
+            var anim = new DoubleAnimation
+            {
+                To = to,
+                Duration = new Duration(TimeSpan.FromMilliseconds(ms)),
+                EnableDependentAnimation = true
+            };
+            Storyboard.SetTarget(anim, KbChunkPreviewCard);
+            Storyboard.SetTargetProperty(anim, "Opacity");
+            var sb = new Storyboard();
+            sb.Children.Add(anim);
+            if (to <= 0)
+            {
+                sb.Completed += (_, _) =>
+                {
+                    if (!_kbPreviewShowing)
+                    {
+                        KbChunkPreviewPopup.IsOpen = false;
+                        _kbPreviewFadingOut = false;
+                    }
+                };
+            }
+            sb.Begin();
+        }
+
+        /// <summary>按当前主题（深色/明亮）设置预览卡片背景、边框与文字突显色，保证 背景↔文字 对比清晰</summary>
+        private void ApplyKbPreviewTheme()
+        {
+            bool dark = (this.Content as FrameworkElement)?.ActualTheme == ElementTheme.Dark;
+
+            var bgTint = dark
+                ? Microsoft.UI.ColorHelper.FromArgb(0xF2, 0x1E, 0x20, 0x24)   // 深色亚克力底色
+                : Microsoft.UI.ColorHelper.FromArgb(0xEC, 0xFF, 0xFF, 0xFF);  // 浅色亚克力底色
+            var bgFallback = dark
+                ? Microsoft.UI.ColorHelper.FromArgb(0xF0, 0x20, 0x22, 0x26)
+                : Microsoft.UI.ColorHelper.FromArgb(0xF0, 0xFF, 0xFF, 0xFF);
+            var bodyColor = dark
+                ? Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xE8, 0xE9, 0xEA)
+                : Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x1F, 0x1F, 0x1F);
+            var accentColor = dark
+                ? Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x9F, 0xC3, 0xF2)
+                : Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x2A, 0x5D, 0x8F);
+
+            KbChunkPreviewCard.Background = new AcrylicBrush
+            {
+                TintColor = bgTint,
+                TintOpacity = 0.85,
+                FallbackColor = bgFallback
+            };
+            KbChunkPreviewCard.BorderBrush = new SolidColorBrush(accentColor);
+            KbChunkPreviewDivider.Background = new SolidColorBrush(
+                Microsoft.UI.ColorHelper.FromArgb(0x55, accentColor.R, accentColor.G, accentColor.B));
+            KbChunkPreviewBody.Foreground = new SolidColorBrush(bodyColor);
+            KbChunkPreviewTitle.Foreground = new SolidColorBrush(accentColor);
+            KbChunkPreviewTag.Foreground = new SolidColorBrush(accentColor);
         }
 
         private void OnKbTopKChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -3828,6 +4006,42 @@ namespace C99
             });
         }
 
+        public void ApplyReportNotificationTheme()
+        {
+            bool dark = (this.Content as FrameworkElement)?.ActualTheme == ElementTheme.Dark;
+            var bg = dark
+                ? Microsoft.UI.ColorHelper.FromArgb(0xF2, 0x1E, 0x20, 0x24)
+                : Microsoft.UI.ColorHelper.FromArgb(0xF0, 0xFF, 0xFF, 0xFF);
+            var text = dark
+                ? Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xE8, 0xE9, 0xEA)
+                : Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x1F, 0x1F, 0x1F);
+            var accent = dark
+                ? Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x4F, 0xC3, 0xFF)
+                : Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x00, 0x78, 0xD4);
+            DreamFactoryNotification.Background = new SolidColorBrush(bg);
+            DreamFactoryNotification.BorderBrush = new SolidColorBrush(accent);
+            DreamFactoryNotificationTitle.Foreground = new SolidColorBrush(accent);
+            DreamFactoryNotificationText.Foreground = new SolidColorBrush(text);
+        }
+
+        public void ApplyPopupNotificationTheme()
+        {
+            bool dark = (this.Content as FrameworkElement)?.ActualTheme == ElementTheme.Dark;
+            var bg = dark
+                ? Microsoft.UI.ColorHelper.FromArgb(0xF2, 0x26, 0x23, 0x20)
+                : Microsoft.UI.ColorHelper.FromArgb(0xF0, 0xFF, 0xFF, 0xFF);
+            var text = dark
+                ? Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xE8, 0xE9, 0xEA)
+                : Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x1F, 0x1F, 0x1F);
+            var accent = dark
+                ? Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xFF, 0xD5, 0x4F)
+                : Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xE8, 0xA0, 0x00);
+            GenericNotification.Background = new SolidColorBrush(bg);
+            GenericNotification.BorderBrush = new SolidColorBrush(accent);
+            GenericNotificationTitle.Foreground = new SolidColorBrush(accent);
+            GenericNotificationText.Foreground = new SolidColorBrush(text);
+        }
+
         private void OnDreamFactoryReport(string summary, string account)
         {
             if (_isClosing) return;
@@ -3840,6 +4054,7 @@ namespace C99
                     string header = $"{nl}=== 工作报告 [{DateTime.Now:HH:mm}] {(string.IsNullOrEmpty(account) ? "" : $"账号:{account}")} ==={nl}";
                     DreamFactoryLog.Text += header + summary + nl;
                     DreamFactoryNotificationText.Text = summary;
+                    ApplyReportNotificationTheme();
                     DreamFactoryNotification.Visibility = Visibility.Visible;
                     _notificationTimer?.Stop();
                     _notificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
@@ -3966,6 +4181,7 @@ namespace C99
                 {
                     GenericNotificationTitle.Text = title;
                     GenericNotificationText.Text = message;
+                    ApplyPopupNotificationTheme();
                     GenericNotification.Visibility = Visibility.Visible;
                     _genericNotificationTimer?.Stop();
                     _genericNotificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(autoDismissSeconds) };
@@ -4331,3 +4547,4 @@ namespace C99
         }
     }
 }
+
