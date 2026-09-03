@@ -75,6 +75,9 @@ namespace C99.Models
 
         /// <summary>召回：Top-K 默认值</summary>
         public int TopK { get; set; } = 5;
+
+        /// <summary>并行向量化文件数（1-32，默认3）</summary>
+        public int ParallelCount { get; set; } = 3;
     }
 
     /// <summary>

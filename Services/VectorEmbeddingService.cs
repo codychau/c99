@@ -258,18 +258,27 @@ namespace C99.Services
             return result;
         }
 
+        /// <summary>强制终止本地 llama-server 进程（取消扫描等场景使用）；下次向量化会自动重启。</summary>
+        public void AbortLocalServer()
+        {
+            lock (_localLock)
+            {
+                try
+                {
+                    if (_localServer != null && !_localServer.HasExited)
+                    {
+                        _localServer.Kill();
+                        _localServer.WaitForExit(3000);
+                    }
+                }
+                catch { }
+                _localServer = null;
+            }
+        }
+
         public void Dispose()
         {
-            try
-            {
-                if (_localServer != null && !_localServer.HasExited)
-                {
-                    _localServer.Kill();
-                    _localServer.WaitForExit(3000);
-                }
-            }
-            catch { }
-            _localServer = null;
+            AbortLocalServer();
             _http.Dispose();
         }
     }

@@ -60,6 +60,7 @@ namespace C99
         private bool _kbInitialized;
         private bool _kbAddDirectoryBusy;
         private CancellationTokenSource? _kbScanCts;
+        private bool _kbCancelling;
         private CancellationTokenSource? _kbSkipFileCts;
 
         // ========== 知识库切片悬停预览 ==========
@@ -1030,6 +1031,11 @@ namespace C99
             KbTopKSlider.Value = _kbConfig.TopK;
             KbTopKText.Text = _kbConfig.TopK.ToString();
 
+            // 并行文件数
+            KbParallelCountSlider.Value = _kbConfig.ParallelCount;
+            KbParallelCountText.Text = _kbConfig.ParallelCount.ToString();
+            KbSkipFileBtn.IsEnabled = _kbConfig.ParallelCount == 1;
+
             _kbInitialized = true;
             UpdateKbActionButtonStates();
         }
@@ -1054,8 +1060,10 @@ namespace C99
                 ? !string.IsNullOrWhiteSpace(KbBuiltInDataDir?.Text)
                 : true;
 
-            KbConnectBtn.IsEnabled = hasDataDir;
+            KbConnectBtn.IsEnabled = !_kbAddDirectoryBusy && hasDataDir;
             KbAddDirectoryBtn.IsEnabled = hasDataDir;
+            if (KbDisconnectBtn != null)
+                KbDisconnectBtn.IsEnabled = !_kbAddDirectoryBusy;
 
             if (builtIn && !hasDataDir)
             {
@@ -1211,7 +1219,7 @@ namespace C99
             }
             finally
             {
-                KbConnectBtn.IsEnabled = true;
+                UpdateKbActionButtonStates();
             }
         }
 
@@ -1414,6 +1422,7 @@ namespace C99
             KbCancelScanBtn.Visibility = Visibility.Visible;
             KbDbStatus.Text = "正在扫描目录...";
             _kbAddDirectoryBusy = true;
+            UpdateKbActionButtonStates();
             using var scanCts = new CancellationTokenSource();
             _kbScanCts = scanCts;
             try
@@ -1466,7 +1475,12 @@ namespace C99
                     }
                     long doneWeight = 0;
 
-                    for (int fileIndex = 0; fileIndex < files.Count; fileIndex++)
+                    // 文件级并行：按配置并发数同时处理多个文件
+                    int maxConcurrent = Math.Max(1, Math.Min(32, _kbConfig.ParallelCount));
+                    var results = new System.Collections.Concurrent.ConcurrentQueue<(bool skipped, bool addFailed, int chunkCount)>();
+                    await Parallel.ForEachAsync(Enumerable.Range(0, files.Count),
+                        new ParallelOptions { MaxDegreeOfParallelism = maxConcurrent, CancellationToken = scanCts.Token },
+                        async (int fileIndex, CancellationToken ct) =>
                     {
                         scanCts.Token.ThrowIfCancellationRequested();
 
@@ -1486,8 +1500,8 @@ namespace C99
 
                         string text;
                         try { text = File.ReadAllText(file); }
-                        catch { continue; } // 跳过无法读取的文件（如二进制误匹配）
-                        if (string.IsNullOrWhiteSpace(text)) continue;
+                        catch { return; } // 跳过无法读取的文件（如二进制误匹配）
+                        if (string.IsNullOrWhiteSpace(text)) return;
 
                         var sw = Stopwatch.StartNew();
                         var chunkModels = new List<KnowledgeChunk>();
@@ -1589,11 +1603,10 @@ namespace C99
 
                         if (skipThisFile)
                         {
-                            skippedFiles++;
-                            doneWeight += fileWeights[fileIndex];
+                            results.Enqueue((true, false, 0));
                             DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = $"已跳过文件 {fileName}");
                             _kbSkipFileCts = null;
-                            continue;
+                            return;
                         }
 
                         // 分批入库并实时反馈写入进度（大文件一次全量写入期间无提示，会误以为卡死）
@@ -1631,22 +1644,24 @@ namespace C99
                         _kbSkipFileCts = null;
                         if (skipThisFile)
                         {
-                            skippedFiles++;
-                            doneWeight += fileWeights[fileIndex];
+                            results.Enqueue((true, false, 0));
                             DispatcherQueue.TryEnqueue(() => KbDbStatus.Text = $"已跳过文件 {fileName}");
-                            continue;
+                            return;
                         }
                         if (!addOk)
                         {
+                            results.Enqueue((false, true, 0));
                             DispatcherQueue.TryEnqueue(() => SetKbDbStatus($"⚠ 文件 {fileName} 入库失败，已跳过\n失败原因：{addError}", isError: true));
-                            doneWeight += fileWeights[fileIndex];
-                            continue;
+                            return;
                         }
                         sw.Stop();
                         Debug.WriteLine($"[KB] 文件 {fileName}：{text.Length / 1024.0:F1}KB / {chunkCount} 切块，向量化+入库耗时 {sw.Elapsed.TotalSeconds:F1}s");
-                        doneWeight += fileWeights[fileIndex];
-                        totalChunks += chunkCount;
-                        totalFiles++;
+                        results.Enqueue((false, false, chunkCount));
+                    });
+                    foreach (var r in results)
+                    {
+                        if (r.skipped) skippedFiles++;
+                        else if (!r.addFailed) { totalFiles++; totalChunks += r.chunkCount; }
                     }
                     return new KbAddDirectoryResult(totalFiles, totalChunks, skippedFiles);
                 });
@@ -1670,6 +1685,8 @@ namespace C99
             }
             catch (OperationCanceledException)
             {
+                if (scanCts.IsCancellationRequested)
+                    _kbEmbedding.AbortLocalServer();
                 DispatcherQueue.TryEnqueue(() => HideKbAddDirectoryProgress("⏹ 已取消扫描"));
                 SaveKbConfig();
             }
@@ -1683,11 +1700,15 @@ namespace C99
                 _kbAddDirectoryBusy = false;
                 _kbScanCts = null;
                 _kbSkipFileCts = null;
+                _kbCancelling = false;
+                UpdateKbActionButtonStates();
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     KbAddDirectoryProgress.Visibility = Visibility.Collapsed;
                     KbSkipFileBtn.Visibility = Visibility.Collapsed;
                     KbCancelScanBtn.Visibility = Visibility.Collapsed;
+                    KbCancelScanBtn.Opacity = 1.0;
+                    KbCancelScanBtn.SetBusy(false);
                 });
             }
         }
@@ -1701,6 +1722,10 @@ namespace C99
         /// <summary>扫描过程中点击「取消」</summary>
         private void OnKbCancelScan(object sender, RoutedEventArgs e)
         {
+            if (_kbCancelling) return;
+            _kbCancelling = true;
+            KbCancelScanBtn.Opacity = 0.5;
+            KbCancelScanBtn.SetBusy(true);
             _kbScanCts?.Cancel();
         }
 
@@ -2159,6 +2184,21 @@ namespace C99
             if (KbTopKText != null) KbTopKText.Text = ((int)e.NewValue).ToString();
         }
 
+        private void OnKbParallelCountChanged(object sender, RangeBaseValueChangedEventArgs e)
+        {
+            if (KbParallelCountSlider != null && KbParallelCountText != null)
+            {
+                int value = (int)Math.Round(KbParallelCountSlider.Value);
+                value = Math.Max(1, Math.Min(32, value));
+                KbParallelCountSlider.Value = value;
+                KbParallelCountText.Text = value.ToString();
+                _kbConfig.ParallelCount = value;
+                SaveKbConfig();
+                // 并行 >1 时无「当前文件」概念，禁用跳过按钮
+                KbSkipFileBtn.IsEnabled = value == 1;
+            }
+        }
+
         private void OnKbQueryChanged(object sender, TextChangedEventArgs e)
         {
             // 回车时在 OnKbSearch 里处理；这里仅清空结果
@@ -2289,7 +2329,7 @@ namespace C99
             switch (preset)
             {
                 case "推荐":
-                    LLamaGPULayers.Value = 35; LLamaContextSize.Value = 8192;
+                    LLamaGPULayers.Value = 35; LLamaContextSize.Value = 32768;
                     LLamaNPredict.Value = -1; LLamaThreads.Value = Environment.ProcessorCount;
                     LLamaBatchSize.Value = 2048; LLamaUBatchSize.Value = 512;
                     LLamaParallel.Value = 1;
@@ -2302,7 +2342,7 @@ namespace C99
                     LLamaExtraArgs.Text = "--cont-batching";
                     break;
                 case "默认":
-                    LLamaGPULayers.Value = 0; LLamaContextSize.Value = 4096;
+                    LLamaGPULayers.Value = 0; LLamaContextSize.Value = 32768;
                     LLamaNPredict.Value = -1; LLamaThreads.Value = 4;
                     LLamaBatchSize.Value = 512; LLamaUBatchSize.Value = 512;
                     LLamaParallel.Value = 1;
@@ -2449,7 +2489,7 @@ namespace C99
         }
         private void OnLLamaContextSizeTextChanged(object sender, TextChangedEventArgs e)
         {
-            if (double.TryParse(LLamaContextSizeText.Text, out var v) && v >= 512 && v <= 131072)
+            if (double.TryParse(LLamaContextSizeText.Text, out var v) && v >= 32768 && v <= 262144)
                 LLamaContextSize.Value = v;
         }
         private void OnLLamaNPredictTextChanged(object sender, TextChangedEventArgs e)
@@ -2670,7 +2710,7 @@ namespace C99
             argsList.Add($"-ngl {ngl}");
             if (ngl == -1)
                 AppendLog("🎯 全量层进 GPU（-ngl -1）");
-            argsList.Add($"-c {(int)LLamaContextSize.Value}");
+            argsList.Add($"-c {(int)Math.Clamp(LLamaContextSize.Value, LLamaContextSize.Minimum, LLamaContextSize.Maximum)}");
             argsList.Add($"-n {(int)LLamaNPredict.Value}");
             argsList.Add($"-t {(int)LLamaThreads.Value}");
             argsList.Add($"-b {(int)LLamaBatchSize.Value}");

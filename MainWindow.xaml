@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:local="using:C99"
     mc:Ignorable="d">
 
     <Grid>
@@ -416,18 +417,34 @@
                                                          FontSize="13" HorizontalAlignment="Left"/>
                                             </StackPanel>
 
-                                            <!-- 向量维度（两种模式共用） -->
-                                            <Grid ColumnSpacing="8" Margin="0,10,0,0">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock Grid.Column="0" Text="向量维度" FontSize="13" VerticalAlignment="Center"/>
-                                                <TextBox x:Name="KbDimension" Grid.Column="1" Width="90" Height="32"
-                                                         FontSize="13" Text="1536" Margin="8,0,0,0"/>
-                                            </Grid>
-                                        </StackPanel>
+                                             <!-- 向量维度（两种模式共用） -->
+                                             <Grid ColumnSpacing="8" Margin="0,10,0,0">
+                                                 <Grid.ColumnDefinitions>
+                                                     <ColumnDefinition Width="*"/>
+                                                     <ColumnDefinition Width="Auto"/>
+                                                     <ColumnDefinition Width="Auto"/>
+                                                 </Grid.ColumnDefinitions>
+                                                 <TextBlock Grid.Column="0" Text="向量维度" FontSize="13" VerticalAlignment="Center"/>
+                                                 <TextBox x:Name="KbDimension" Grid.Column="1" Width="90" Height="32"
+                                                          FontSize="13" Text="1536" Margin="8,0,0,0"/>
+                                             </Grid>
+
+                                             <!-- 并行文件数设置 -->
+                                             <Grid ColumnSpacing="8" Margin="0,10,0,0">
+                                                 <Grid.ColumnDefinitions>
+                                                     <ColumnDefinition Width="*"/>
+                                                     <ColumnDefinition Width="Auto"/>
+                                                     <ColumnDefinition Width="Auto"/>
+                                                 </Grid.ColumnDefinitions>
+                                                 <TextBlock Grid.Column="0" Text="并行文件数" FontSize="13" VerticalAlignment="Center"/>
+                                                 <Slider x:Name="KbParallelCountSlider" Grid.Column="1" Width="200" Minimum="1" Maximum="32"
+                                                         Value="3" VerticalAlignment="Center" StepFrequency="1" SmallChange="1" LargeChange="3"
+                                                         ValueChanged="OnKbParallelCountChanged"/>
+                                                 <TextBox x:Name="KbParallelCountText" Grid.Column="2" Width="60" Height="32" FontSize="13"
+                                                          Text="3" HorizontalAlignment="Left" Margin="8,0,0,0"
+                                                          IsEnabled="False" HorizontalContentAlignment="Center"/>
+                                             </Grid>
+                                         </StackPanel>
                                     </Border>
 
                                     <!-- 向量数据库设置 -->
@@ -558,8 +575,8 @@
                                                              VerticalAlignment="Center" Visibility="Collapsed"/>
                                                  <Button Grid.Column="1" x:Name="KbSkipFileBtn" Content="⏭ 跳过当前文件"
                                                          FontSize="12" Height="30" Click="OnKbSkipCurrentFile" Visibility="Collapsed"/>
-                                                 <Button Grid.Column="2" x:Name="KbCancelScanBtn" Content="✕ 取消"
-                                                         FontSize="12" Height="30" Click="OnKbCancelScan" Visibility="Collapsed"/>
+<local:BusyCursorButton Grid.Column="2" x:Name="KbCancelScanBtn" Content="✕ 取消"
+                                                          FontSize="12" Height="30" Click="OnKbCancelScan" Visibility="Collapsed"/>
                                              </Grid>
 
 <Grid Margin="0,4,0,8">
@@ -844,7 +861,7 @@
                                     <TextBlock Text="上下文长度 (-c, --ctx-size)" FontSize="13" Margin="0,0,0,4"/>
                                     <Grid Margin="0,0,0,10">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="80"/></Grid.ColumnDefinitions>
-                                        <Slider x:Name="LLamaContextSize" Grid.Column="0" Minimum="512" Maximum="131072" Value="8192" StepFrequency="512" ValueChanged="OnLLamaValueChanged" Margin="0,0,12,0"/>
+                                        <Slider x:Name="LLamaContextSize" Grid.Column="0" Minimum="32768" Maximum="262144" Value="32768" StepFrequency="512" ValueChanged="OnLLamaValueChanged" Margin="0,0,12,0"/>
                                         <TextBox Grid.Column="1" x:Name="LLamaContextSizeText" Text="8192" FontSize="13" TextChanged="OnLLamaContextSizeTextChanged"/>
                                     </Grid>
 
