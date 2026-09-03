@@ -2750,19 +2750,25 @@ namespace C99
 
             string args = string.Join(" ", argsList);
 
-            // ---- 进程级 GPU 可见性过滤（HIP_VISIBLE_DEVICES） ----
+            // ---- 进程级 GPU 可见性过滤（CUDA / HIP 通用） ----
             string visibleTag = (LLamaVisibleGPU.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
             Dictionary<string, string>? env = null;
             if (!string.IsNullOrWhiteSpace(visibleTag))
             {
                 // 多值（逗号分隔）保留原样，如 "1,2"
-                string hipValue = string.Join(",", visibleTag.Split(',')
+                string devList = string.Join(",", visibleTag.Split(',')
                     .Select(s => s.Trim())
                     .Where(s => int.TryParse(s, out _)));
-                if (!string.IsNullOrEmpty(hipValue))
+                if (!string.IsNullOrEmpty(devList))
                 {
-                    env = new Dictionary<string, string> { ["HIP_VISIBLE_DEVICES"] = hipValue };
-                    AppendLog($"🎯 可见显卡: 仅 HIP_VISIBLE_DEVICES={hipValue}（仅作用于本次启动的进程，进程内序号将重排从 0 开始）");
+                    // CUDA 构建读 CUDA_VISIBLE_DEVICES，HIP/ROCm 构建读 HIP_VISIBLE_DEVICES，
+                    // 两个变量互不读取，双设可同时覆盖 NVIDIA 与 AMD 的 llama.cpp 后端
+                    env = new Dictionary<string, string>
+                    {
+                        ["CUDA_VISIBLE_DEVICES"] = devList,
+                        ["HIP_VISIBLE_DEVICES"] = devList,
+                    };
+                    AppendLog($"🎯 可见显卡: 仅 {devList}（CUDA_VISIBLE_DEVICES + HIP_VISIBLE_DEVICES，进程内序号将重排从 0 开始）");
                 }
             }
 
