@@ -26,13 +26,11 @@
 
   <!-- 内置向量库 Rust DLL：按平台复制到输出目录 -->
   <ItemGroup>
-    <Content Include="NATIVE\vector-db-rust\target\release\BuiltInVectorDb.dll"
-             Condition="'$(Platform)' == 'x64'">
+    <Content Include="NATIVE\vector-db-rust\target\release\BuiltInVectorDb.dll" Condition="'$(Platform)' == 'x64'">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>BuiltInVectorDb.dll</Link>
     </Content>
-    <Content Include="NATIVE\vector-db-rust\target\release\BuiltInVectorDb.dll"
-             Condition="'$(Platform)' == 'x86'">
+    <Content Include="NATIVE\vector-db-rust\target\release\BuiltInVectorDb.dll" Condition="'$(Platform)' == 'x86'">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>BuiltInVectorDb.dll</Link>
     </Content>
@@ -74,5 +72,6 @@
     <AppxBundle>Never</AppxBundle>
     <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <ApplicationIcon>Assets\c99.ico</ApplicationIcon>
   </PropertyGroup>
 </Project>
