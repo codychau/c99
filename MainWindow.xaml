@@ -183,7 +183,9 @@
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <Button x:Name="WorkflowMainBtn" Grid.Column="0"
@@ -192,12 +194,17 @@
                                 <Button x:Name="WorkflowKbBtn" Grid.Column="2"
                                         Content="知识库检索流程" FontSize="14" Height="38"
                                         Click="OnWorkflowKbClick"/>
+                                <Button x:Name="WorkflowGatewayBtn" Grid.Column="4"
+                                        Content="模型网关" FontSize="14" Height="38"
+                                        Click="OnWorkflowGatewayClick"/>
                             </Grid>
                             <TextBlock x:Name="WorkflowModeHint" FontSize="12" Foreground="Gray"
                                        Text="切换后下方 System Prompt 与工作流逻辑将切换为对应模式" Margin="0,6,0,0"/>
                         </StackPanel>
                     </Border>
 
+                    <!-- 报告工作流内容（主流程 / 知识库检索流程共用） -->
+                    <StackPanel x:Name="WorkflowReportContent">
                     <!-- System Prompt -->
                     <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
                         <StackPanel>
@@ -315,6 +322,118 @@
                             </ScrollViewer>
                         </StackPanel>
                     </Border>
+                    </StackPanel>
+
+                    <!-- 模型网关 -->
+                    <StackPanel x:Name="GatewayPanel" Visibility="Collapsed">
+                        <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="模型网关" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                <TextBlock Text="在本机暴露一个 OpenAI 兼容入口（挂在本服务 9527 端口的 /gateway 前缀），把外部 Agent（dify / openclaw 等）的请求转发到上游模型，并在转发时统计 Token、计入首页「AI底座费用」。" FontSize="12" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,12"/>
+
+                                <Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox Grid.Column="0" x:Name="GatewayEnabledToggle" Content="启用"
+                                              FontSize="13" VerticalAlignment="Center"
+                                              Checked="OnGatewayEnabledChanged" Unchecked="OnGatewayEnabledChanged"/>
+                                    <Button Grid.Column="2" x:Name="GatewayCopyBtn" Content="复制网关地址"
+                                            FontSize="12" Height="32" Click="OnGatewayCopyClick"/>
+                                </Grid>
+
+                                <TextBlock Text="上游模型地址（留空 = 跟随当前「AI 模型配置」）" FontSize="13" Margin="0,0,0,4"/>
+                                <TextBox x:Name="GatewayUpstreamBox" Height="32" FontSize="13"
+                                         PlaceholderText="例如 http://127.0.0.1:8888/v1（或完整 /chat/completions 地址）"
+                                         TextChanged="OnGatewayUpstreamChanged" Margin="0,0,0,8"/>
+
+                                <TextBlock x:Name="GatewayStatus" FontSize="12" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                                <Border Background="#14FFFFFF" CornerRadius="6" Padding="12,10" Margin="0,0,0,10">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12" Foreground="#888" TextWrapping="Wrap">
+                                            <Run Text="▸ Agent 目标地址改为："/>
+                                            <Run x:Name="GatewayAddressText" Text="http://127.0.0.1:9527/gateway/v1/chat/completions" FontFamily="Consolas"/>
+                                        </TextBlock>
+                                        <TextBlock Text="▸ 计费：按「AI 底座计费」设定的单价/阶梯计价，计入首页「底座费用 / Token 总用量」" FontSize="12" Foreground="#888" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                        <TextBlock Text="▸ 仅统计 chat 请求（/chat/completions）；/embeddings 等其它路径透传不计费" FontSize="12" Foreground="#888" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <TextBlock Text="网关日志" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+                                    <TextBox x:Name="GatewayLog" IsReadOnly="True" FontFamily="Consolas"
+                                             FontSize="12" TextWrapping="Wrap" BorderThickness="0" MinHeight="80"/>
+                                </ScrollViewer>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 网关工作流逻辑（接收 → 前置 → AI → 结束，省去后置/动作） -->
+                        <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="网关工作流逻辑" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                <TextBlock Text="工作流名称（对应配置 key）" FontSize="13" Margin="0,0,0,4"/>
+                                <TextBox x:Name="GatewayWorkflowName" Height="32" FontSize="13"
+                                         PlaceholderText="gateway" TextChanged="OnDreamFactoryConfigChanged"
+                                         Margin="0,0,0,10"/>
+                                <Border BorderBrush="#33888888" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,8,0,12">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="22"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- 水平连接线 -->
+                                        <Border Grid.Row="0" Grid.ColumnSpan="4" Height="2"
+                                                Background="#55888888" VerticalAlignment="Center"
+                                                Margin="28,0,28,0" CornerRadius="1"/>
+
+                                        <!-- 接收 -->
+                                        <Ellipse Grid.Row="0" Grid.Column="0" Width="18" Height="18"
+                                                 Fill="#FF5B9BD5" Stroke="#FF3A7BC8" StrokeThickness="1.5"
+                                                 HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="接收" FontSize="11"
+                                                   HorizontalAlignment="Center" Foreground="#888" Margin="0,3,0,0"/>
+
+                                        <!-- 前置 -->
+                                        <Ellipse Grid.Row="0" Grid.Column="1" Width="18" Height="18"
+                                                 Fill="#FFED7D31" Stroke="#FFD4651E" StrokeThickness="1.5"
+                                                 HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="前置" FontSize="11"
+                                                   HorizontalAlignment="Center" Foreground="#888" Margin="0,3,0,0"/>
+                                        <Button Grid.Row="2" Grid.Column="1" Content="编辑"
+                                                FontSize="11" Height="24" Width="56"
+                                                HorizontalAlignment="Center" Margin="0,4,0,0"
+                                                Click="OnDesignPreAILogic"/>
+
+                                        <!-- AI（转发） -->
+                                        <Ellipse Grid.Row="0" Grid.Column="2" Width="22" Height="22"
+                                                 Fill="#FFC000F0" Stroke="#FF9000B0" StrokeThickness="2"
+                                                 HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="AI(转发)" FontSize="12" FontWeight="Bold"
+                                                   HorizontalAlignment="Center" Foreground="#C000F0" Margin="0,3,0,0"/>
+
+                                        <!-- 结束 -->
+                                        <Ellipse Grid.Row="0" Grid.Column="3" Width="18" Height="18"
+                                                 Fill="#FF70AD47" Stroke="#FF548235" StrokeThickness="1.5"
+                                                 HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="3" Text="结束" FontSize="11"
+                                                   HorizontalAlignment="Center" Foreground="#888" Margin="0,3,0,0"/>
+                                    </Grid>
+                                </Border>
+                                <TextBlock Text="提示：前置逻辑可改写最后一条 user 消息（context.user_prompt），或注入知识库/文件检索上下文后随请求一并转发给上游；网关不使用后置与动作节点。" FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
                 </StackPanel>
 
                 <!-- AI杂货铺 -->
@@ -769,6 +888,69 @@
                             <TextBlock Text="提示：在 AI梦工厂 → 自定义外部模型中选择「使用设置中的模型」后，将自动关联此处的配置。" FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
+
+                    <!-- AI 底座计费 -->
+                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="AI 底座计费" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                            <TextBlock Text="用于统计仪表盘中的「AI底座费用」。费用由累计 Token 总量反算，修改配置会追溯调整历史费用。" FontSize="12" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,12"/>
+
+                            <TextBlock Text="计费模式" FontSize="13" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="BillingModeSelector" Height="34" FontSize="13" Margin="0,0,0,12"
+                                      SelectionChanged="OnBillingModeChanged">
+                                <ComboBoxItem Content="单价 × Token 数量" Tag="Flat"/>
+                                <ComboBoxItem Content="阶梯式递增" Tag="Tiered"/>
+                            </ComboBox>
+
+                            <!-- 模式1：单价 × Token 数量 -->
+                            <StackPanel x:Name="FlatBillingPanel">
+                                <TextBlock Text="底座单价（¥/百万tokens）" FontSize="13" Margin="0,0,0,4"/>
+                                <TextBox x:Name="BasePricePerMillionBox" Height="32" FontSize="13"
+                                         PlaceholderText="2" TextChanged="OnBillingPriceChanged" Margin="0,0,0,4"/>
+                            </StackPanel>
+
+                            <!-- 模式2：阶梯式递增 -->
+                            <StackPanel x:Name="TieredBillingPanel" Visibility="Collapsed">
+                                <Grid ColumnSpacing="8" Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="阈值上限（tokens）" FontSize="12" Foreground="Gray"/>
+                                    <TextBlock Grid.Column="1" Text="单价（¥/百万tokens）" FontSize="12" Foreground="Gray"/>
+                                </Grid>
+                                <ItemsControl x:Name="PriceTierItems" Margin="0,0,0,8">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid ColumnSpacing="8" Margin="0,0,0,6">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBox Grid.Column="0" Height="32" FontSize="13"
+                                                         Tag="max"
+                                                         PlaceholderText="例如 1000000，留空=无上限"
+                                                         Text="{Binding MaxTokensText, Mode=TwoWay}"
+                                                         TextChanged="OnTierItemChanged"/>
+                                                <TextBox Grid.Column="1" Height="32" FontSize="13"
+                                                         Tag="price"
+                                                         PlaceholderText="例如 2"
+                                                         Text="{Binding PriceText, Mode=TwoWay}"
+                                                         TextChanged="OnTierItemChanged"/>
+                                                <Button Grid.Column="2" Content="删除" FontSize="12" Height="32"
+                                                        Click="OnRemoveTierClick"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button x:Name="AddTierBtn" Content="＋ 添加阶梯" FontSize="13" Height="34"
+                                        Click="OnAddTierClick"/>
+                                <TextBlock Text="提示：按累计 Token 总量从低到高分档，单价逐档递增；「阈值上限」表示该档上限（超出进入下一档），末档留空表示无上限。" FontSize="12" Foreground="Gray" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <!-- 关于 -->
@@ -1071,6 +1253,11 @@
                                         <TextBlock Grid.Column="3" Text="端口" VerticalAlignment="Center" FontSize="12"/>
                                         <TextBox Grid.Column="4" x:Name="LLamaPort" Text="8080" FontSize="13" Height="32"/>
                                     </Grid>
+                                    <TextBlock FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,8">
+                                        <Run Text="💡 想让外部 Agent（dify / openclaw 等）的调用也计入首页费用？把 Agent 的目标地址改为 "/>
+                                        <Run Text="http://127.0.0.1:9527/gateway/v1/chat/completions" FontFamily="Consolas"/>
+                                        <Run Text="，无需改此端口（详见 梦工厂 → 模型网关）。"/>
+                                    </TextBlock>
 
                                     <!-- ========== 额外 ========== -->
                                     <TextBlock Text="── 额外参数 ──" FontSize="14" FontWeight="SemiBold" Foreground="#888" Margin="0,8,0,8"/>

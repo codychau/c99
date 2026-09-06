@@ -13,7 +13,7 @@ namespace C99.Models
         public string Category { get; set; } = "";
     }
 
-    /// <summary>AI梦工厂工作流模式：主流程 / 知识库检索流程</summary>
+    /// <summary>AI梦工厂工作流模式：主流程 / 知识库检索流程 / 模型网关</summary>
     public enum DreamWorkflowMode
     {
         /// <summary>主流程（默认，原有邮件报告工作流）</summary>
@@ -21,6 +21,46 @@ namespace C99.Models
 
         /// <summary>知识库检索流程</summary>
         KnowledgeBase = 1,
+
+        /// <summary>模型网关：监听 9527 /gateway 前缀，转发外部请求并统计底座费用</summary>
+        Gateway = 2,
+    }
+
+    /// <summary>
+    /// 模型网关配置（挂在梦工厂 9527 HTTP 服务的 /gateway 前缀下）
+    /// </summary>
+    public class ModelGatewayConfig
+    {
+        /// <summary>是否启用网关路由（关闭后 /gateway/v1/* 返回 404）</summary>
+        public bool Enabled { get; set; } = true;
+
+        /// <summary>上游 OpenAI 兼容地址。留空 = 跟随当前「AI 模型配置」生效地址；可填完整地址或 /v1 基地址</summary>
+        public string UpstreamUrl { get; set; } = "";
+
+        /// <summary>是否已展示过「模型网关」工作流的欢迎说明</summary>
+        public bool HintShown { get; set; }
+    }
+
+    /// <summary>AI 底座计费模式</summary>
+    public enum BillingMode
+    {
+        /// <summary>单价 × Token 数量（默认）</summary>
+        Flat = 0,
+
+        /// <summary>阶梯式递增（按累计 Token 总量分档，单价随档位递增）</summary>
+        Tiered = 1,
+    }
+
+    /// <summary>
+    /// 计费阶梯（按累计 Token 总量分档）
+    /// </summary>
+    public class PriceTier
+    {
+        /// <summary>该档 Token 上限（含此阈值；超出进入下一档）。小于等于 0 表示无上限（末档）</summary>
+        public long MaxTokens { get; set; }
+
+        /// <summary>该档单价（¥/百万tokens）</summary>
+        public double PricePerMillion { get; set; }
     }
 
     /// <summary>
@@ -81,6 +121,9 @@ namespace C99.Models
         /// <summary>当前使用的工作流名称（知识库检索流程）</summary>
         public string CurrentWorkflowKb { get; set; } = "kb_report";
 
+        /// <summary>当前使用的工作流名称（模型网关流程）</summary>
+        public string CurrentWorkflowGateway { get; set; } = "gateway";
+
         /// <summary>获取当前模式对应的 System Prompt</summary>
         public string GetEffectiveSystemPrompt() =>
             CurrentWorkflowMode == DreamWorkflowMode.KnowledgeBase ? SystemPromptKb : SystemPrompt;
@@ -91,7 +134,12 @@ namespace C99.Models
 
         /// <summary>获取指定模式对应的工作流名称</summary>
         public string GetWorkflowName(DreamWorkflowMode mode) =>
-            mode == DreamWorkflowMode.KnowledgeBase ? CurrentWorkflowKb : CurrentWorkflow;
+            mode switch
+            {
+                DreamWorkflowMode.KnowledgeBase => CurrentWorkflowKb,
+                DreamWorkflowMode.Gateway => CurrentWorkflowGateway,
+                _ => CurrentWorkflow,
+            };
 
         /// <summary>获取实际使用的 API URL</summary>
         public string GetEffectiveApiUrl()
@@ -147,6 +195,21 @@ namespace C99.Models
 
         /// <summary>本地模型价格（¥/百万tokens）</summary>
         public double LocalPricePerMillion { get; set; } = 2;
+
+        /// <summary>AI 底座计费模式</summary>
+        public BillingMode BaseBillingMode { get; set; } = BillingMode.Flat;
+
+        /// <summary>AI 底座单价（模式1：单价 × Token 数量，¥/百万tokens）</summary>
+        public double BasePricePerMillion { get; set; } = 2;
+
+        /// <summary>AI 底座阶梯（模式2：阶梯式递增，按累计 Token 总量分档）</summary>
+        public List<PriceTier> BasePriceTiers { get; set; } = new();
+
+        /// <summary>模型网关配置</summary>
+        public ModelGatewayConfig GatewayConfig { get; set; } = new();
+
+        /// <summary>是否已完成旧「本地模型价格」到新单价选项的一次性迁移</summary>
+        public bool BasePriceMigrated { get; set; }
 
         /// <summary>AI 杂货铺工具列表</summary>
         public List<AIToolItem> AITools { get; set; } = new()

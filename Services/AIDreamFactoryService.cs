@@ -44,6 +44,9 @@ namespace C99.Services
         /// <summary>指标服务（由外部注入）</summary>
         public MetricsService? Metrics { get; set; }
 
+        /// <summary>模型网关（/gateway 前缀，统计外部直连请求到底座费用）</summary>
+        private readonly ModelGateway _gateway;
+
         /// <summary>知识库检索器（由外部注入，返回检索到的上下文文本；参数为查询、TopK、集合名）</summary>
         public Func<string, int, string, Task<string>>? KnowledgeSearcher { get; set; }
 
@@ -54,6 +57,7 @@ namespace C99.Services
         public event Action<string, string>? OnWebReportReady;
 
         public event Action<string>? OnLog;
+        public event Action<string>? OnGatewayLog;
         public event Func<string, string, int, Task>? OnPopupNotifyAsync;
         public event Func<string, string, Task<bool>>? OnPopupConfirmAsync;
 
@@ -64,6 +68,7 @@ namespace C99.Services
             _config = config;
             _base64Encoding = config.Base64Encoding;
             _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
+            _gateway = new ModelGateway(config);
         }
 
         public void Start()
@@ -141,6 +146,13 @@ namespace C99.Services
             {
                 string path = request.Url?.AbsolutePath ?? "/";
 
+                // 模型网关：/gateway/v1/*（与报告接口通过 URL 前缀隔离）
+                if (path.StartsWith("/gateway", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleGatewayAsync(request, response, path);
+                    return;
+                }
+
                 // 根据接口路径识别工作流模式：/api/report=主流程，/api/kb/=知识库检索流程
                 _requestMode.Value = path.StartsWith("/api/kb/", StringComparison.OrdinalIgnoreCase)
                     ? DreamWorkflowMode.KnowledgeBase
@@ -186,6 +198,99 @@ namespace C99.Services
                 response.StatusCode = 500;
                 await WriteJsonAsync(response, new { error = ex.Message });
             }
+        }
+
+        /// <summary>模型网关路由：/gateway/v1/* 转发到上游并统计 Token</summary>
+        private async Task HandleGatewayAsync(HttpListenerRequest request, HttpListenerResponse response, string path)
+        {
+            if (!_config.GatewayConfig.Enabled)
+            {
+                response.StatusCode = 404;
+                await WriteJsonAsync(response, new { error = "模型网关未启用，请在「AI梦工厂 → 模型网关」工作流中开启" });
+                return;
+            }
+
+            try
+            {
+                if (path.Equals("/gateway/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleGatewayChatPipelineAsync(request, response);
+                }
+                else if (path.Equals("/gateway/v1/models", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _gateway.HandleModelsAsync(request, response, GatewayLog);
+                }
+                else if (path.Equals("/gateway/health", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteJsonAsync(response, new
+                    {
+                        status = "ok",
+                        gateway = true,
+                        upstream = string.IsNullOrWhiteSpace(_config.GatewayConfig.UpstreamUrl)
+                            ? _config.GetEffectiveApiUrl() : _config.GatewayConfig.UpstreamUrl
+                    });
+                }
+                else if (path.StartsWith("/gateway/v1/", StringComparison.OrdinalIgnoreCase))
+                {
+                    // 其它 OpenAI 兼容路径（如 /embeddings）透传不计费
+                    string upstreamPath = path["/gateway".Length..];
+                    await _gateway.HandleGenericAsync(request, response, request.HttpMethod, upstreamPath, GatewayLog);
+                }
+                else
+                {
+                    response.StatusCode = 404;
+                    await WriteJsonAsync(response, new { error = $"未知网关路径: {path}" });
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"网关处理异常: {ex.Message}");
+                try
+                {
+                    response.StatusCode = 500;
+                    await WriteJsonAsync(response, new { error = ex.Message });
+                }
+                catch { }
+            }
+        }
+
+        /// <summary>网关 chat 流水线：接收 → 前置逻辑（可改写请求）→ AI(转发上游,计数) → 结束</summary>
+        private async Task HandleGatewayChatPipelineAsync(HttpListenerRequest request, HttpListenerResponse response)
+        {
+            string body;
+            using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+                body = await reader.ReadToEndAsync();
+
+            string wf = _config.GetWorkflowName(DreamWorkflowMode.Gateway);
+            _config.LogicPipelines.TryGetValue(wf, out var pipelineConfig);
+            var pre = pipelineConfig?.PreAILogic;
+
+            string finalBody = body;
+            if (pre != null && pre.Enabled && pre.Actions.Count > 0)
+            {
+                var context = new Dictionary<string, string>
+                {
+                    ["request_json"] = body,
+                    ["user_prompt"] = ModelGateway.ExtractUserPrompt(body),
+                    ["workflow"] = wf,
+                };
+                var engine = CreateLogicEngine();
+                try
+                {
+                    GatewayLog($"[网关前置逻辑] {wf} 开始执行 ({pre.Actions.Count} 个动作)");
+                    await engine.ExecuteAsync(pre, context);
+                    GatewayLog("[网关前置逻辑] 执行完毕");
+                }
+                catch (Exception ex)
+                {
+                    GatewayLog($"[网关前置逻辑] 执行异常: {ex.Message}");
+                }
+
+                string newPrompt = context.TryGetValue("user_prompt", out var p) ? p.Trim() : "";
+                finalBody = ModelGateway.RebuildBodyWithPrompt(body, newPrompt);
+            }
+
+            await _gateway.HandleChatCompletionAsync(request, response, Metrics, GatewayLog, finalBody);
         }
 
         private async Task HandleReportAsync(HttpListenerRequest request, HttpListenerResponse response)
@@ -1081,6 +1186,12 @@ namespace C99.Services
         {
             OnLog?.Invoke(msg);
             System.Diagnostics.Debug.WriteLine($"[AI梦工厂] {msg}");
+        }
+
+        private void GatewayLog(string msg)
+        {
+            OnGatewayLog?.Invoke(msg);
+            Log(msg);
         }
 
         private async Task ExecutePostActionAsync(PostActionConfig action, string summary, string account)

@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
@@ -747,19 +748,20 @@ namespace C99
             var m = _metricsService.GetCurrent();
             long totalTokens = m.TotalPromptTokens + m.TotalCompletionTokens;
             double apiCost = m.TotalApiCost;
-            double localCost = m.TotalLocalTokens * (Math.Max(0, _dreamConfig.LocalPricePerMillion) / 1_000_000.0);
+            double localCost = BillingCalculator.ComputeBaseCost(
+                (long)m.TotalLocalTokens, _dreamConfig.BaseBillingMode, _dreamConfig.BasePricePerMillion, _dreamConfig.BasePriceTiers);
             double totalCost = apiCost + localCost;
 
             var values = new string[]
             {
                 $"{m.TotalAICalls:N0} 次",
                 $"{totalTokens:N0}",
-                $"¥ {apiCost:F2}",
+                $"¥ {apiCost:F4}",
                 $"{m.TotalReports:N0} 次",
                 $"{m.TotalPipelineSteps:N0} 次",
-                $"¥ {localCost:F2}",
+                $"¥ {localCost:F4}",
                 FormatDuration(m.TotalEngineRunSeconds),
-                $"¥ {totalCost:F2}",
+                $"¥ {totalCost:F4}",
                 ProjectedMonthly(totalCost, m.FirstRecord),
             };
 
@@ -778,7 +780,7 @@ namespace C99
         {
             var days = Math.Max(1, (DateTime.Now - firstRecord).TotalDays);
             double monthly = totalCost / days * 30;
-            return $"¥ {monthly:F2}";
+            return $"¥ {monthly:F4}";
         }
 
         private void RebuildAIToolsGrid()
@@ -3644,6 +3646,8 @@ namespace C99
 
             DreamFactoryPrompt.Text = _dreamConfig.GetEffectiveSystemPrompt();
             DreamFactoryWorkflowName.Text = _dreamConfig.GetWorkflowName(_dreamConfig.CurrentWorkflowMode);
+            if (GatewayWorkflowName != null)
+                GatewayWorkflowName.Text = _dreamConfig.GetWorkflowName(DreamWorkflowMode.Gateway);
 
             foreach (ComboBoxItem item in DreamFactoryEncoding.Items)
             {
@@ -3654,7 +3658,14 @@ namespace C99
             DreamFactoryMaxTokens.Value = _dreamConfig.MaxTokens;
             DreamFactoryMaxTokensText.Text = _dreamConfig.MaxTokens.ToString();
 
+            // 模型网关配置
+            if (GatewayEnabledToggle != null)
+                GatewayEnabledToggle.IsChecked = _dreamConfig.GatewayConfig.Enabled;
+            if (GatewayUpstreamBox != null)
+                GatewayUpstreamBox.Text = _dreamConfig.GatewayConfig.UpstreamUrl;
+
             UpdateDreamFactoryStatusUI();
+            RefreshGatewayStatusUI();
         }
 
         private void PopulateCustomModelCombo()
@@ -3690,6 +3701,11 @@ namespace C99
             // 按当前模式保存对应的工作流名称
             if (_dreamConfig.CurrentWorkflowMode == DreamWorkflowMode.KnowledgeBase)
                 _dreamConfig.CurrentWorkflowKb = DreamFactoryWorkflowName.Text.Trim();
+            else if (_dreamConfig.CurrentWorkflowMode == DreamWorkflowMode.Gateway)
+            {
+                string gw = GatewayWorkflowName?.Text.Trim() ?? "";
+                if (!string.IsNullOrEmpty(gw)) _dreamConfig.CurrentWorkflowGateway = gw;
+            }
             else
                 _dreamConfig.CurrentWorkflow = DreamFactoryWorkflowName.Text.Trim();
 
@@ -3720,6 +3736,12 @@ namespace C99
                 _dreamConfig.Base64Encoding = encItem.Tag?.ToString() ?? "auto";
 
             _dreamConfig.MaxTokens = (int)DreamFactoryMaxTokens.Value;
+
+            // 模型网关配置
+            if (GatewayEnabledToggle != null)
+                _dreamConfig.GatewayConfig.Enabled = GatewayEnabledToggle.IsChecked == true;
+            if (GatewayUpstreamBox != null)
+                _dreamConfig.GatewayConfig.UpstreamUrl = GatewayUpstreamBox.Text.Trim();
         }
 
         private void UpdateDreamFactoryStatusUI()
@@ -3731,6 +3753,7 @@ namespace C99
                 : new SolidColorBrush(Microsoft.UI.Colors.Gray);
             DreamFactoryToggleBtn.Content = running ? "⏹ 停止" : "▶ 启动";
             DreamFactoryPort.IsEnabled = !running;
+            RefreshGatewayStatusUI();
         }
 
         private void StartDreamFactoryService()
@@ -3746,6 +3769,7 @@ namespace C99
             _dreamFactoryService = new AIDreamFactoryService(_dreamConfig);
             _dreamFactoryService.Metrics = _metricsService;
             _dreamFactoryService.OnLog += OnDreamFactoryLog;
+            _dreamFactoryService.OnGatewayLog += OnDreamFactoryGatewayLog;
             _dreamFactoryService.OnReportGenerated += OnDreamFactoryReport;
             _dreamFactoryService.OnWebReportReady += ShowWebReportToast;
             _dreamFactoryService.OnPopupNotifyAsync += OnGenericPopupNotifyAsync;
@@ -3863,6 +3887,11 @@ namespace C99
             await SwitchWorkflowModeAsync(DreamWorkflowMode.KnowledgeBase);
         }
 
+        private async void OnWorkflowGatewayClick(object sender, RoutedEventArgs e)
+        {
+            await SwitchWorkflowModeAsync(DreamWorkflowMode.Gateway);
+        }
+
         /// <summary>切换工作流模式：先把当前 UI 内容存档，再加载目标模式的配置到界面</summary>
         private async Task SwitchWorkflowModeAsync(DreamWorkflowMode mode)
         {
@@ -3881,6 +3910,8 @@ namespace C99
                 _isLoadingDreamConfig = true;
                 DreamFactoryPrompt.Text = _dreamConfig.GetEffectiveSystemPrompt();
                 DreamFactoryWorkflowName.Text = _dreamConfig.GetWorkflowName(mode);
+                if (GatewayWorkflowName != null)
+                    GatewayWorkflowName.Text = _dreamConfig.GetWorkflowName(DreamWorkflowMode.Gateway);
                 ApplyWorkflowModeButtons();
             }
             finally
@@ -3941,20 +3972,37 @@ namespace C99
             }
         }
 
-        /// <summary>刷新两模式切换按钮的高亮样式（互斥：一个按下，另一个弹起）</summary>
+        /// <summary>刷新三个工作流模式按钮的高亮样式，并按模式切换报告内容 / 网关面板</summary>
         private void ApplyWorkflowModeButtons()
         {
-            if (WorkflowMainBtn == null || WorkflowKbBtn == null) return;
-            bool isMain = _dreamConfig.CurrentWorkflowMode != DreamWorkflowMode.KnowledgeBase;
-            SetWorkflowBtnHighlight(WorkflowMainBtn, isMain);
-            SetWorkflowBtnHighlight(WorkflowKbBtn, !isMain);
+            var mode = _dreamConfig.CurrentWorkflowMode;
+            SetWorkflowBtnHighlight(WorkflowMainBtn, mode == DreamWorkflowMode.Main);
+            SetWorkflowBtnHighlight(WorkflowKbBtn, mode == DreamWorkflowMode.KnowledgeBase);
+            SetWorkflowBtnHighlight(WorkflowGatewayBtn, mode == DreamWorkflowMode.Gateway);
+
             if (WorkflowModeHint != null)
-                WorkflowModeHint.Text = isMain
-                    ? $"当前：主流程（System Prompt / 工作流 {_dreamConfig.CurrentWorkflow}）"
-                    : $"当前：知识库检索流程（System Prompt / 工作流 {_dreamConfig.CurrentWorkflowKb}）";
+            {
+                WorkflowModeHint.Text = mode switch
+                {
+                    DreamWorkflowMode.KnowledgeBase =>
+                        $"当前：知识库检索流程（System Prompt / 工作流 {_dreamConfig.CurrentWorkflowKb}）",
+                    DreamWorkflowMode.Gateway =>
+                        $"当前：模型网关（转发外部请求并统计底座费用，工作流 {_dreamConfig.CurrentWorkflowGateway}）",
+                    _ => $"当前：主流程（System Prompt / 工作流 {_dreamConfig.CurrentWorkflow}）",
+                };
+            }
+
+            bool isGateway = mode == DreamWorkflowMode.Gateway;
+            if (WorkflowReportContent != null)
+                WorkflowReportContent.Visibility = isGateway ? Visibility.Collapsed : Visibility.Visible;
+            if (GatewayPanel != null)
+                GatewayPanel.Visibility = isGateway ? Visibility.Visible : Visibility.Collapsed;
+
+            if (isGateway)
+                RefreshGatewayStatusUI();
         }
 
-        private void SetWorkflowBtnHighlight(Button btn, bool active)
+        private static void SetWorkflowBtnHighlight(Button? btn, bool active)
         {
             if (btn == null) return;
             btn.Background = active
@@ -4050,6 +4098,128 @@ namespace C99
                 }
                 catch (Exception) { }
             });
+        }
+
+        private void OnDreamFactoryGatewayLog(string msg)
+        {
+            if (_isClosing) return;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_isClosing) return;
+                try
+                {
+                    string nl = Environment.NewLine;
+                    if (GatewayLog != null)
+                    {
+                        GatewayLog.Text += $"[{DateTime.Now:HH:mm:ss}] {msg}{nl}";
+                        var lines = GatewayLog.Text.Split(nl);
+                        if (lines.Length > 200) GatewayLog.Text = string.Join(nl, lines[^200..]);
+                    }
+                }
+                catch (Exception) { }
+            });
+        }
+
+        // ==================== 模型网关 ====================
+
+        private void OnGatewayEnabledChanged(object sender, RoutedEventArgs e)
+        {
+            if (_isLoadingDreamConfig) return;
+            _dreamConfig.GatewayConfig.Enabled = GatewayEnabledToggle?.IsChecked == true;
+            SaveDreamFactoryConfig();
+            RefreshGatewayStatusUI();
+        }
+
+        private void OnGatewayUpstreamChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_isLoadingDreamConfig) return;
+            _dreamConfig.GatewayConfig.UpstreamUrl = GatewayUpstreamBox?.Text.Trim() ?? "";
+            SaveDreamFactoryConfig();
+            RefreshGatewayStatusUI();
+        }
+
+        private void OnGatewayCopyClick(object sender, RoutedEventArgs e)
+        {
+            string address = $"http://127.0.0.1:{_dreamConfig.Port}/gateway/v1/chat/completions";
+            if (CopyToClipboard(address))
+                ShowToast($"已复制网关地址：{address}");
+            else
+                ShowToast("复制失败，请手动抄写地址");
+        }
+
+        private void RefreshGatewayStatusUI()
+        {
+            if (GatewayStatus == null || GatewayAddressText == null) return;
+
+            GatewayAddressText.Text = $"http://127.0.0.1:{_dreamConfig.Port}/gateway/v1/chat/completions";
+
+            string upstream = string.IsNullOrWhiteSpace(_dreamConfig.GatewayConfig.UpstreamUrl)
+                ? $"跟随当前「AI 模型配置」（{_dreamConfig.GetEffectiveApiUrl()}）"
+                : _dreamConfig.GatewayConfig.UpstreamUrl;
+
+            bool enabled = _dreamConfig.GatewayConfig.Enabled;
+            bool serviceOn = _dreamFactoryService?.IsRunning == true;
+
+            GatewayStatus.Text = !enabled
+                ? "● 网关未启用：/gateway/v1/* 将返回 404（勾选上方「启用」后生效）"
+                : serviceOn
+                    ? $"● 网关运行中（端口 {_dreamConfig.Port}）。上游：{upstream}"
+                    : $"● 网关已启用，但梦工厂 HTTP 服务未运行（需先启动服务）。上游：{upstream}";
+        }
+
+        /// <summary>复制文本到剪贴板（P/Invoke，打包/免打包均可用）</summary>
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool OpenClipboard(System.IntPtr hWndNewOwner);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool EmptyClipboard();
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern System.IntPtr SetClipboardData(uint uFormat, System.IntPtr hMem);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool CloseClipboard();
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern System.IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern System.IntPtr GlobalLock(System.IntPtr hMem);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern bool GlobalUnlock(System.IntPtr hMem);
+
+        private static bool CopyToClipboard(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            try
+            {
+                bool ok = OpenClipboard(System.IntPtr.Zero);
+                if (!ok) return false;
+                EmptyClipboard();
+                var bytes = System.Text.Encoding.Unicode.GetBytes(text);
+                System.IntPtr hGlobal = GlobalAlloc(0x0042 /* GMEM_MOVEABLE|GMEM_ZEROINIT */,
+                    new UIntPtr((uint)(bytes.Length + 2)));
+                if (hGlobal == System.IntPtr.Zero) { CloseClipboard(); return false; }
+                System.IntPtr dest = GlobalLock(hGlobal);
+                System.Runtime.InteropServices.Marshal.Copy(bytes, 0, dest, bytes.Length);
+                GlobalUnlock(hGlobal);
+                SetClipboardData(13 /* CF_UNICODETEXT */, hGlobal);
+                CloseClipboard();
+                return true;
+            }
+            catch { return false; }
+        }
+
+        private void ShowToast(string message)
+        {
+            try
+            {
+                var toast = new Microsoft.UI.Xaml.Controls.TextBlock { Text = message };
+                var dialog = new Microsoft.UI.Xaml.Controls.ContentDialog
+                {
+                    Title = "提示",
+                    Content = message,
+                    CloseButtonText = "知道了",
+                    XamlRoot = this.Content.XamlRoot
+                };
+                _ = dialog.ShowAsync();
+            }
+            catch { }
         }
 
         public void ApplyReportNotificationTheme()
@@ -4210,6 +4380,8 @@ namespace C99
             {
                 if (_dreamConfig.CurrentWorkflowMode == DreamWorkflowMode.KnowledgeBase)
                 { _dreamConfig.CurrentWorkflowKb = "kb_report"; wf = "kb_report"; }
+                else if (_dreamConfig.CurrentWorkflowMode == DreamWorkflowMode.Gateway)
+                { _dreamConfig.CurrentWorkflowGateway = "gateway"; wf = "gateway"; }
                 else
                 { _dreamConfig.CurrentWorkflow = "mail_report"; wf = "mail_report"; }
             }
@@ -4277,6 +4449,8 @@ namespace C99
             SettingsApiInputPrice.Text = _dreamConfig.ApiInputPricePerMillion.ToString("F2");
             SettingsApiOutputPrice.Text = _dreamConfig.ApiOutputPricePerMillion.ToString("F2");
             SettingsLocalPrice.Text = _dreamConfig.LocalPricePerMillion.ToString("F2");
+
+            LoadBillingSettingsUI();
         }
 
         private void PopulateSettingsModelCombo()
@@ -4461,6 +4635,127 @@ namespace C99
             _dreamConfig.ApiOutputPricePerMillion = outp;
             _dreamConfig.LocalPricePerMillion = loc;
             SaveDreamFactoryConfig();
+            UpdateDashboardValues();
+        }
+
+        // ==================== 设置：AI 底座计费 ====================
+
+        private bool _isLoadingBillingUI;
+        private readonly ObservableCollection<BillingTierRow> _billingTierRows = new();
+
+        private void LoadBillingSettingsUI()
+        {
+            if (BillingModeSelector == null) return;
+            _isLoadingBillingUI = true;
+            try
+            {
+                // 一次性迁移：旧「本地模型价格」若被自定义过，且新单价仍是默认值，则自动对齐
+                if (!_dreamConfig.BasePriceMigrated)
+                {
+                    _dreamConfig.BasePriceMigrated = true;
+                    if (_dreamConfig.BasePricePerMillion == 2 && _dreamConfig.LocalPricePerMillion != 2)
+                        _dreamConfig.BasePricePerMillion = _dreamConfig.LocalPricePerMillion;
+                }
+
+                foreach (ComboBoxItem item in BillingModeSelector.Items)
+                {
+                    if (item.Tag?.ToString() == _dreamConfig.BaseBillingMode.ToString())
+                    { BillingModeSelector.SelectedItem = item; break; }
+                }
+                BasePricePerMillionBox.Text = _dreamConfig.BasePricePerMillion.ToString("F2");
+
+                FlatBillingPanel.Visibility = _dreamConfig.BaseBillingMode == BillingMode.Flat
+                    ? Visibility.Visible : Visibility.Collapsed;
+                TieredBillingPanel.Visibility = _dreamConfig.BaseBillingMode == BillingMode.Tiered
+                    ? Visibility.Visible : Visibility.Collapsed;
+
+                _billingTierRows.Clear();
+                foreach (var t in _dreamConfig.BasePriceTiers)
+                {
+                    _billingTierRows.Add(new BillingTierRow
+                    {
+                        MaxTokensText = t.MaxTokens > 0 ? t.MaxTokens.ToString() : "",
+                        PriceText = t.PricePerMillion.ToString("F2"),
+                    });
+                }
+                if (_billingTierRows.Count == 0) _billingTierRows.Add(new BillingTierRow());
+                PriceTierItems.ItemsSource = _billingTierRows;
+            }
+            finally { _isLoadingBillingUI = false; }
+        }
+
+        private void OnBillingModeChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isLoadingBillingUI) return;
+            var tag = (BillingModeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+            _dreamConfig.BaseBillingMode = tag == "Tiered" ? BillingMode.Tiered : BillingMode.Flat;
+            FlatBillingPanel.Visibility = _dreamConfig.BaseBillingMode == BillingMode.Flat
+                ? Visibility.Visible : Visibility.Collapsed;
+            TieredBillingPanel.Visibility = _dreamConfig.BaseBillingMode == BillingMode.Tiered
+                ? Visibility.Visible : Visibility.Collapsed;
+            SaveBillingConfig();
+        }
+
+        private void OnBillingPriceChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_isLoadingBillingUI) return;
+            double.TryParse(BasePricePerMillionBox?.Text, out var price);
+            _dreamConfig.BasePricePerMillion = price;
+            SaveBillingConfig();
+        }
+
+        private void OnAddTierClick(object sender, RoutedEventArgs e)
+        {
+            _billingTierRows.Add(new BillingTierRow());
+            SyncTiersFromRows();
+        }
+
+        private void OnRemoveTierClick(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button b && b.DataContext is BillingTierRow row)
+                _billingTierRows.Remove(row);
+            if (_billingTierRows.Count == 0) _billingTierRows.Add(new BillingTierRow());
+            SyncTiersFromRows();
+        }
+
+        private void OnTierItemChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_isLoadingBillingUI) return;
+            if (sender is TextBox box && box.DataContext is BillingTierRow row)
+            {
+                string tag = box.Tag as string ?? "";
+                if (tag == "max") row.MaxTokensText = box.Text;
+                else if (tag == "price") row.PriceText = box.Text;
+            }
+            SyncTiersFromRows();
+        }
+
+        private void SyncTiersFromRows()
+        {
+            var tiers = new List<PriceTier>();
+            foreach (var row in _billingTierRows)
+            {
+                long max = 0;
+                if (long.TryParse(row.MaxTokensText?.Trim(), out var m)) max = m;
+                double price = 0;
+                if (double.TryParse(row.PriceText?.Trim(), out var p)) price = p;
+                tiers.Add(new PriceTier { MaxTokens = max, PricePerMillion = price });
+            }
+            _dreamConfig.BasePriceTiers = tiers;
+            SaveBillingConfig();
+        }
+
+        private void SaveBillingConfig()
+        {
+            SaveDreamFactoryConfig();
+            UpdateDashboardValues();
+        }
+
+        /// <summary>阶梯编辑行（ItemsControl 数据源）</summary>
+        public class BillingTierRow
+        {
+            public string MaxTokensText { get; set; } = "";
+            public string PriceText { get; set; } = "";
         }
 
         private void OnDreamFactoryMaxTokensChanged(object sender, RangeBaseValueChangedEventArgs e)
