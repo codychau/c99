@@ -45,7 +45,6 @@
 .NOTES
   前置要求：
     1. 本机安装 Visual Studio 2022（含 UWP/桌面 + MSIX 打包组件）。
-    2. python 已在 PATH（XAML 编译补丁依赖，见 fix_xaml_input.py）。
 #>
 
 [CmdletBinding()]
@@ -75,10 +74,6 @@ $manifestFile = Join-Path $projectRoot "Package.appxmanifest"
 
 if (-not (Test-Path $projectFile))  { throw "未找到项目文件: $projectFile" }
 if (-not (Test-Path $manifestFile)) { throw "未找到清单文件: $manifestFile" }
-
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    Write-Warning "未在 PATH 中找到 python，XAML 编译修复步骤可能会失败（见 fix_xaml_input.py）。"
-}
 
 # ---------- 定位 MSBuild（vswhere 优先） ----------
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
