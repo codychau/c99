@@ -749,7 +749,8 @@ namespace C99
             long totalTokens = m.TotalPromptTokens + m.TotalCompletionTokens;
             double apiCost = m.TotalApiCost;
             double localCost = BillingCalculator.ComputeBaseCost(
-                (long)m.TotalLocalTokens, _dreamConfig.BaseBillingMode, _dreamConfig.BasePricePerMillion, _dreamConfig.BasePriceTiers);
+                m.TotalLocalPromptTokens, m.TotalLocalCompletionTokens, _dreamConfig.BaseBillingMode,
+                _dreamConfig.BaseInputPricePerMillion, _dreamConfig.BaseOutputPricePerMillion, _dreamConfig.BasePriceTiers);
             double totalCost = apiCost + localCost;
 
             var values = new string[]
@@ -3591,6 +3592,7 @@ namespace C99
                     {
                         _dreamConfig = cfg;
                         MigrateGatewayUpstreamConfig();
+                        MigrateBasePricingConfig();
                     }
                 }
             }
@@ -3618,6 +3620,31 @@ namespace C99
                 gw.UpstreamUrl = "";
             }
             catch (Exception ex) { Debug.WriteLine($"迁移网关上游配置失败: {ex.Message}"); }
+        }
+
+        /// <summary>底座计费一次性迁移：旧「本地模型价格」对齐到旧「底座单价」，旧单价/旧阶梯单价格再复制到输入/输出两价</summary>
+        private void MigrateBasePricingConfig()
+        {
+            if (!_dreamConfig.BasePriceMigrated)
+            {
+                _dreamConfig.BasePriceMigrated = true;
+                if (_dreamConfig.BasePricePerMillion == 2 && _dreamConfig.LocalPricePerMillion != 2)
+                    _dreamConfig.BasePricePerMillion = _dreamConfig.LocalPricePerMillion;
+            }
+            if (!_dreamConfig.BaseInputOutputMigrated)
+            {
+                _dreamConfig.BaseInputOutputMigrated = true;
+                _dreamConfig.BaseInputPricePerMillion = _dreamConfig.BasePricePerMillion;
+                _dreamConfig.BaseOutputPricePerMillion = _dreamConfig.BasePricePerMillion;
+                foreach (var t in _dreamConfig.BasePriceTiers)
+                {
+                    if (t.InputPricePerMillion <= 0 && t.OutputPricePerMillion <= 0 && t.PricePerMillion > 0)
+                    {
+                        t.InputPricePerMillion = t.PricePerMillion;
+                        t.OutputPricePerMillion = t.PricePerMillion;
+                    }
+                }
+            }
         }
 
         private void SaveDreamFactoryConfig()
@@ -4674,20 +4701,13 @@ namespace C99
             _isLoadingBillingUI = true;
             try
             {
-                // 一次性迁移：旧「本地模型价格」若被自定义过，且新单价仍是默认值，则自动对齐
-                if (!_dreamConfig.BasePriceMigrated)
-                {
-                    _dreamConfig.BasePriceMigrated = true;
-                    if (_dreamConfig.BasePricePerMillion == 2 && _dreamConfig.LocalPricePerMillion != 2)
-                        _dreamConfig.BasePricePerMillion = _dreamConfig.LocalPricePerMillion;
-                }
-
                 foreach (ComboBoxItem item in BillingModeSelector.Items)
                 {
                     if (item.Tag?.ToString() == _dreamConfig.BaseBillingMode.ToString())
                     { BillingModeSelector.SelectedItem = item; break; }
                 }
-                BasePricePerMillionBox.Text = _dreamConfig.BasePricePerMillion.ToString("F2");
+                BaseInputPriceBox.Text = _dreamConfig.BaseInputPricePerMillion.ToString("F2");
+                BaseOutputPriceBox.Text = _dreamConfig.BaseOutputPricePerMillion.ToString("F2");
 
                 FlatBillingPanel.Visibility = _dreamConfig.BaseBillingMode == BillingMode.Flat
                     ? Visibility.Visible : Visibility.Collapsed;
@@ -4700,7 +4720,8 @@ namespace C99
                     _billingTierRows.Add(new BillingTierRow
                     {
                         MaxTokensText = t.MaxTokens > 0 ? t.MaxTokens.ToString() : "",
-                        PriceText = t.PricePerMillion.ToString("F2"),
+                        InputPriceText = t.InputPricePerMillion.ToString("F2"),
+                        OutputPriceText = t.OutputPricePerMillion.ToString("F2"),
                     });
                 }
                 if (_billingTierRows.Count == 0) _billingTierRows.Add(new BillingTierRow());
@@ -4724,8 +4745,17 @@ namespace C99
         private void OnBillingPriceChanged(object sender, TextChangedEventArgs e)
         {
             if (_isLoadingBillingUI) return;
-            double.TryParse(BasePricePerMillionBox?.Text, out var price);
-            _dreamConfig.BasePricePerMillion = price;
+            if (ReferenceEquals(sender, BaseInputPriceBox))
+            {
+                double.TryParse(BaseInputPriceBox?.Text, out var inp);
+                _dreamConfig.BaseInputPricePerMillion = inp;
+            }
+            else if (ReferenceEquals(sender, BaseOutputPriceBox))
+            {
+                double.TryParse(BaseOutputPriceBox?.Text, out var outp);
+                _dreamConfig.BaseOutputPricePerMillion = outp;
+            }
+            else return;
             SaveBillingConfig();
         }
 
@@ -4750,7 +4780,8 @@ namespace C99
             {
                 string tag = box.Tag as string ?? "";
                 if (tag == "max") row.MaxTokensText = box.Text;
-                else if (tag == "price") row.PriceText = box.Text;
+                else if (tag == "in") row.InputPriceText = box.Text;
+                else if (tag == "out") row.OutputPriceText = box.Text;
             }
             SyncTiersFromRows();
         }
@@ -4762,9 +4793,11 @@ namespace C99
             {
                 long max = 0;
                 if (long.TryParse(row.MaxTokensText?.Trim(), out var m)) max = m;
-                double price = 0;
-                if (double.TryParse(row.PriceText?.Trim(), out var p)) price = p;
-                tiers.Add(new PriceTier { MaxTokens = max, PricePerMillion = price });
+                double inp = 0;
+                if (double.TryParse(row.InputPriceText?.Trim(), out var ip)) inp = ip;
+                double outp = 0;
+                if (double.TryParse(row.OutputPriceText?.Trim(), out var op)) outp = op;
+                tiers.Add(new PriceTier { MaxTokens = max, InputPricePerMillion = inp, OutputPricePerMillion = outp });
             }
             _dreamConfig.BasePriceTiers = tiers;
             SaveBillingConfig();
@@ -4780,7 +4813,8 @@ namespace C99
         public class BillingTierRow
         {
             public string MaxTokensText { get; set; } = "";
-            public string PriceText { get; set; } = "";
+            public string InputPriceText { get; set; } = "";
+            public string OutputPriceText { get; set; } = "";
         }
 
         private void OnDreamFactoryMaxTokensChanged(object sender, RangeBaseValueChangedEventArgs e)

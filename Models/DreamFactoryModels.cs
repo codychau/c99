@@ -59,8 +59,14 @@ namespace C99.Models
         /// <summary>该档 Token 上限（含此阈值；超出进入下一档）。小于等于 0 表示无上限（末档）</summary>
         public long MaxTokens { get; set; }
 
-        /// <summary>该档单价（¥/百万tokens）</summary>
+        /// <summary>该档单价（¥/百万tokens），已废弃：仅用于读取旧配置并一次性迁移为输入/输出两价</summary>
         public double PricePerMillion { get; set; }
+
+        /// <summary>该档输入价格（¥/百万tokens）</summary>
+        public double InputPricePerMillion { get; set; }
+
+        /// <summary>该档输出价格（¥/百万tokens）</summary>
+        public double OutputPricePerMillion { get; set; }
     }
 
     /// <summary>
@@ -214,10 +220,19 @@ namespace C99.Models
         /// <summary>AI 底座计费模式</summary>
         public BillingMode BaseBillingMode { get; set; } = BillingMode.Flat;
 
-        /// <summary>AI 底座单价（模式1：单价 × Token 数量，¥/百万tokens）</summary>
+        /// <summary>AI 底座单价（模式1：单价 × Token 数量，¥/百万tokens），已废弃：仅用于读取旧配置并一次性迁移为输入/输出两价</summary>
         public double BasePricePerMillion { get; set; } = 2;
 
-        /// <summary>AI 底座阶梯（模式2：阶梯式递增，按累计 Token 总量分档）</summary>
+        /// <summary>AI 底座输入价格（¥/百万tokens，按累计输入 Token 计价）</summary>
+        public double BaseInputPricePerMillion { get; set; } = 2;
+
+        /// <summary>AI 底座输出价格（¥/百万tokens，按累计输出 Token 计价）</summary>
+        public double BaseOutputPricePerMillion { get; set; } = 2;
+
+        /// <summary>是否已完成旧「底座单价」到输入/输出两价的一次性迁移</summary>
+        public bool BaseInputOutputMigrated { get; set; }
+
+        /// <summary>AI 底座阶梯（模式2：阶梯式递增，输入/输出各自按累计量独立分档）</summary>
         public List<PriceTier> BasePriceTiers { get; set; } = new();
 
         /// <summary>模型网关配置</summary>

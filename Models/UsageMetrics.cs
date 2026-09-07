@@ -12,6 +12,8 @@ namespace C99.Models
         public double TotalAIDurationMs { get; set; }
         public double TotalApiCost { get; set; }
         public double TotalLocalTokens { get; set; }
+        public long TotalLocalPromptTokens { get; set; }
+        public long TotalLocalCompletionTokens { get; set; }
         public double TotalEngineRunSeconds { get; set; }
         public DateTime LastUpdated { get; set; } = DateTime.Now;
         public DateTime FirstRecord { get; set; } = DateTime.Now;

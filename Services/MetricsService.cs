@@ -72,7 +72,11 @@ namespace C99.Services
                 _metrics.TotalCompletionTokens += completionTokens;
                 _metrics.TotalAIDurationMs += durationMs;
                 if (isLocal)
+                {
                     _metrics.TotalLocalTokens += promptTokens + completionTokens;
+                    _metrics.TotalLocalPromptTokens += promptTokens;
+                    _metrics.TotalLocalCompletionTokens += completionTokens;
+                }
                 else
                     _metrics.TotalApiCost += cost;
             }
@@ -109,6 +113,8 @@ namespace C99.Services
                 TotalAIDurationMs = _metrics.TotalAIDurationMs,
                 TotalApiCost = _metrics.TotalApiCost,
                 TotalLocalTokens = _metrics.TotalLocalTokens,
+                TotalLocalPromptTokens = _metrics.TotalLocalPromptTokens,
+                TotalLocalCompletionTokens = _metrics.TotalLocalCompletionTokens,
                 TotalEngineRunSeconds = _metrics.TotalEngineRunSeconds,
                 LastUpdated = _metrics.LastUpdated,
                 FirstRecord = _metrics.FirstRecord,

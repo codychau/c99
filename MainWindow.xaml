@@ -364,7 +364,7 @@
                                             <Run Text="▸ Agent 目标地址改为："/>
                                             <Run x:Name="GatewayAddressText" Text="http://127.0.0.1:9527/gateway/v1/chat/completions" FontFamily="Consolas"/>
                                         </TextBlock>
-                                        <TextBlock Text="▸ 计费：按「AI 底座计费」设定的单价/阶梯计价，计入首页「底座费用 / Token 总用量」" FontSize="12" Foreground="#888" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                        <TextBlock Text="▸ 计费：按「AI 底座计费」设定的输入/输出单价或阶梯计价，计入首页「底座费用 / Token 总用量」" FontSize="12" Foreground="#888" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                         <TextBlock Text="▸ 仅统计 chat 请求（/chat/completions）；/embeddings 等其它路径透传不计费" FontSize="12" Foreground="#888" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                     </StackPanel>
                                 </Border>
@@ -900,7 +900,7 @@
                     <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
                         <StackPanel>
                             <TextBlock Text="AI 底座计费" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4"/>
-                            <TextBlock Text="用于统计仪表盘中的「AI底座费用」。费用由累计 Token 总量反算，修改配置会追溯调整历史费用。" FontSize="12" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                            <TextBlock Text="用于统计仪表盘中的「AI底座费用」。费用按累计输入/输出 Token 分别反算，修改配置会追溯调整历史费用。" FontSize="12" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,12"/>
 
                             <TextBlock Text="计费模式" FontSize="13" Margin="0,0,0,4"/>
                             <ComboBox x:Name="BillingModeSelector" Height="34" FontSize="13" Margin="0,0,0,12"
@@ -911,8 +911,11 @@
 
                             <!-- 模式1：单价 × Token 数量 -->
                             <StackPanel x:Name="FlatBillingPanel">
-                                <TextBlock Text="底座单价（¥/百万tokens）" FontSize="13" Margin="0,0,0,4"/>
-                                <TextBox x:Name="BasePricePerMillionBox" Height="32" FontSize="13"
+                                <TextBlock Text="输入价格（¥/百万tokens）" FontSize="13" Margin="0,0,0,4"/>
+                                <TextBox x:Name="BaseInputPriceBox" Height="32" FontSize="13"
+                                         PlaceholderText="2" TextChanged="OnBillingPriceChanged" Margin="0,0,0,10"/>
+                                <TextBlock Text="输出价格（¥/百万tokens）" FontSize="13" Margin="0,0,0,4"/>
+                                <TextBox x:Name="BaseOutputPriceBox" Height="32" FontSize="13"
                                          PlaceholderText="2" TextChanged="OnBillingPriceChanged" Margin="0,0,0,4"/>
                             </StackPanel>
 
@@ -922,16 +925,19 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="阈值上限（tokens）" FontSize="12" Foreground="Gray"/>
-                                    <TextBlock Grid.Column="1" Text="单价（¥/百万tokens）" FontSize="12" Foreground="Gray"/>
+                                    <TextBlock Grid.Column="1" Text="输入价格（¥/百万tokens）" FontSize="12" Foreground="Gray"/>
+                                    <TextBlock Grid.Column="2" Text="输出价格（¥/百万tokens）" FontSize="12" Foreground="Gray"/>
                                 </Grid>
                                 <ItemsControl x:Name="PriceTierItems" Margin="0,0,0,8">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Grid ColumnSpacing="8" Margin="0,0,0,6">
                                                 <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
@@ -942,11 +948,16 @@
                                                          Text="{Binding MaxTokensText, Mode=TwoWay}"
                                                          TextChanged="OnTierItemChanged"/>
                                                 <TextBox Grid.Column="1" Height="32" FontSize="13"
-                                                         Tag="price"
+                                                         Tag="in"
                                                          PlaceholderText="例如 2"
-                                                         Text="{Binding PriceText, Mode=TwoWay}"
+                                                         Text="{Binding InputPriceText, Mode=TwoWay}"
                                                          TextChanged="OnTierItemChanged"/>
-                                                <Button Grid.Column="2" Content="删除" FontSize="12" Height="32"
+                                                <TextBox Grid.Column="2" Height="32" FontSize="13"
+                                                         Tag="out"
+                                                         PlaceholderText="例如 8"
+                                                         Text="{Binding OutputPriceText, Mode=TwoWay}"
+                                                         TextChanged="OnTierItemChanged"/>
+                                                <Button Grid.Column="3" Content="删除" FontSize="12" Height="32"
                                                         Click="OnRemoveTierClick"/>
                                             </Grid>
                                         </DataTemplate>
@@ -954,7 +965,7 @@
                                 </ItemsControl>
                                 <Button x:Name="AddTierBtn" Content="＋ 添加阶梯" FontSize="13" Height="34"
                                         Click="OnAddTierClick"/>
-                                <TextBlock Text="提示：按累计 Token 总量从低到高分档，单价逐档递增；「阈值上限」表示该档上限（超出进入下一档），末档留空表示无上限。" FontSize="12" Foreground="Gray" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                                <TextBlock Text="提示：输入/输出各自按自己的累计量从低到高独立分档，价格逐档递增；「阈值上限」表示该档上限（超出进入下一档），末档留空表示无上限。" FontSize="12" Foreground="Gray" TextWrapping="Wrap" Margin="0,10,0,0"/>
                             </StackPanel>
                         </StackPanel>
                     </Border>
