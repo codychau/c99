@@ -101,10 +101,17 @@
                 <StackPanel x:Name="AIDreamFactoryContent" Visibility="Collapsed">
                     <TextBlock Text="AI梦工厂 - 你的AI小助手" FontSize="24" Margin="0,0,0,16"/>
 
-                    <!-- HTTP 服务控制 -->
-                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
-                        <StackPanel>
-                            <TextBlock Text="HTTP 服务" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <!-- HTTP 服务 + 信息接收设置（同一行各 50%），AI 模型配置在下方独占一行 -->
+                    <Grid ColumnSpacing="12" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- HTTP 服务控制 -->
+                        <Border Grid.Column="0" BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16">
+                            <StackPanel>
+                                <TextBlock Text="HTTP 服务" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="端口：" VerticalAlignment="Center" FontSize="13"/>
                                 <TextBox x:Name="DreamFactoryPort" Width="80" Height="32"
@@ -125,6 +132,25 @@
                             </StackPanel>
                         </StackPanel>
                     </Border>
+
+                    <!-- 信息接收设置 -->
+                    <Border Grid.Column="1" BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16">
+                            <StackPanel>
+                                <TextBlock Text="信息接收设置" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="编码格式：" VerticalAlignment="Center" FontSize="13"/>
+                                <ComboBox x:Name="DreamFactoryEncoding" Width="140" Height="32" Margin="8,0,0,0"
+                                          SelectionChanged="OnDreamFactoryConfigChanged">
+                                    <ComboBoxItem Content="自动检测" Tag="auto"/>
+                                    <ComboBoxItem Content="UTF-8" Tag="utf-8"/>
+                                    <ComboBoxItem Content="GB2312" Tag="gb2312"/>
+                                    <ComboBoxItem Content="GBK" Tag="gbk"/>
+                                    <ComboBoxItem Content="Big5" Tag="big5"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    </Grid>
 
                     <!-- AI 模型配置 -->
                     <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
@@ -154,24 +180,6 @@
                                 <ComboBox x:Name="DreamFactoryCustomModel" Height="34" FontSize="13"
                                           SelectionChanged="OnDreamFactoryConfigChanged" Margin="0,0,0,10"
                                           PlaceholderText="请先在设置中获取模型列表..."/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- 信息接收设置 -->
-                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
-                        <StackPanel>
-                            <TextBlock Text="信息接收设置" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="编码格式：" VerticalAlignment="Center" FontSize="13"/>
-                                <ComboBox x:Name="DreamFactoryEncoding" Width="140" Height="32" Margin="8,0,0,0"
-                                          SelectionChanged="OnDreamFactoryConfigChanged">
-                                    <ComboBoxItem Content="自动检测" Tag="auto"/>
-                                    <ComboBoxItem Content="UTF-8" Tag="utf-8"/>
-                                    <ComboBoxItem Content="GB2312" Tag="gb2312"/>
-                                    <ComboBoxItem Content="GBK" Tag="gbk"/>
-                                    <ComboBoxItem Content="Big5" Tag="big5"/>
-                                </ComboBox>
                             </StackPanel>
                         </StackPanel>
                     </Border>
@@ -344,9 +352,9 @@
                                             FontSize="12" Height="32" Click="OnGatewayCopyClick"/>
                                 </Grid>
 
-                                <TextBlock Text="上游模型地址（留空 = 跟随当前「AI 模型配置」）" FontSize="13" Margin="0,0,0,4"/>
+                                <TextBlock Text="上游路径后缀（留空 = 跟随「AI 模型配置」；基地址自动跟随配置）" FontSize="13" Margin="0,0,0,4"/>
                                 <TextBox x:Name="GatewayUpstreamBox" Height="32" FontSize="13"
-                                         PlaceholderText="例如 http://127.0.0.1:8888/v1（或完整 /chat/completions 地址）"
+                                         PlaceholderText="例如 /v1/chat/completions 或 /api/v1/chat/completions"
                                          TextChanged="OnGatewayUpstreamChanged" Margin="0,0,0,8"/>
 
                                 <TextBlock x:Name="GatewayStatus" FontSize="12" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,10"/>

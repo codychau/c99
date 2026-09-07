@@ -25,34 +25,39 @@ namespace C99.Services
             _config = config;
         }
 
-        /// <summary>解析上游 OpenAI 兼容基地址（自动兼容完整地址 / /v1 基地址 / 跟随当前模型配置；0.0.0.0 归一化为 127.0.0.1）</summary>
-        public string ResolveUpstreamBase()
+        /// <summary>从「AI 模型配置」生效地址取基地址（scheme://host:port，0.0.0.0 归一化为 127.0.0.1）</summary>
+        public string ResolveUpstreamOrigin()
         {
-            string raw = string.IsNullOrWhiteSpace(_config.GatewayConfig.UpstreamUrl)
-                ? _config.GetEffectiveApiUrl()
-                : _config.GatewayConfig.UpstreamUrl.Trim();
-
-            string url = raw.TrimEnd('/');
-            if (url.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
-                url = url[..url.LastIndexOf("/chat/completions", StringComparison.OrdinalIgnoreCase)].TrimEnd('/');
-
-            // 0.0.0.0 / ::0 是不可作为连接目标的通配地址，HttpClient 会直接报错，统一改为本机回环
+            string url = DreamFactoryConfig.NormalizeConnectableUrl(_config.GetEffectiveApiUrl());
             if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            {
-                string host = uri.Host.Trim('[', ']');
-                if (host == "0.0.0.0" || host == "::" || host == "::0" || host == "0:0:0:0:0:0:0:0")
-                {
-                    var ub = new UriBuilder(uri) { Host = "127.0.0.1" };
-                    url = ub.Uri.ToString().TrimEnd('/');
-                }
-            }
+                return new UriBuilder(uri) { Path = "", Query = "", Fragment = "" }.Uri.ToString().TrimEnd('/');
             return url;
         }
 
-        private HttpRequestMessage BuildForwardRequest(string method, string upstreamPath, string body, string? auth)
+        /// <summary>解析上游 chat 完整地址：基地址跟随「AI 模型配置」，路径后缀可自定义（留空 = 完全跟随生效地址）</summary>
+        public string ResolveUpstreamChatUrl()
         {
-            string upstreamBase = ResolveUpstreamBase();
-            var req = new HttpRequestMessage(new HttpMethod(method), upstreamBase + upstreamPath);
+            string raw = string.IsNullOrWhiteSpace(_config.GatewayConfig.UpstreamPath)
+                ? _config.GetEffectiveApiUrl()
+                : ResolveUpstreamOrigin() + EnsureLeadingSlash(_config.GatewayConfig.UpstreamPath.Trim());
+            return DreamFactoryConfig.NormalizeConnectableUrl(raw);
+        }
+
+        /// <summary>解析上游 API 根：chat 地址去尾 /chat/completions；不含则回退到基地址</summary>
+        public string ResolveUpstreamRoot()
+        {
+            string chat = ResolveUpstreamChatUrl();
+            if (chat.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+                return chat[..chat.LastIndexOf("/chat/completions", StringComparison.OrdinalIgnoreCase)].TrimEnd('/');
+            return ResolveUpstreamOrigin();
+        }
+
+        private static string EnsureLeadingSlash(string path) =>
+            path.StartsWith("/", StringComparison.Ordinal) ? path : "/" + path;
+
+        private HttpRequestMessage BuildForwardRequest(string method, string absoluteUrl, string body, string? auth)
+        {
+            var req = new HttpRequestMessage(new HttpMethod(method), absoluteUrl);
             if (!string.IsNullOrEmpty(body))
                 req.Content = new StringContent(body, Encoding.UTF8, "application/json");
             if (!string.IsNullOrEmpty(auth))
@@ -80,7 +85,7 @@ namespace C99.Services
             int promptEstimate = EstimatePromptTokens(body);
 
             string? auth = GetAuth(request);
-            using var upstreamReq = BuildForwardRequest("POST", "/chat/completions", body, auth);
+            using var upstreamReq = BuildForwardRequest("POST", ResolveUpstreamChatUrl(), body, auth);
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             try
@@ -179,7 +184,7 @@ namespace C99.Services
         public async Task HandleModelsAsync(HttpListenerRequest request, HttpListenerResponse response, Action<string>? log)
         {
             string? auth = GetAuth(request);
-            using var upstreamReq = BuildForwardRequest("GET", "/models", "", auth);
+            using var upstreamReq = BuildForwardRequest("GET", ResolveUpstreamRoot() + "/models", "", auth);
             try
             {
                 using var upstreamResp = await _http.SendAsync(upstreamReq);
@@ -204,7 +209,7 @@ namespace C99.Services
                 body = await reader.ReadToEndAsync();
             }
             string? auth = GetAuth(request);
-            using var upstreamReq = BuildForwardRequest(method, upstreamPath, body, auth);
+            using var upstreamReq = BuildForwardRequest(method, ResolveUpstreamOrigin() + upstreamPath, body, auth);
             try
             {
                 using var upstreamResp = await _http.SendAsync(upstreamReq, HttpCompletionOption.ResponseHeadersRead);

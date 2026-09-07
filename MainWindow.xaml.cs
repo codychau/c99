@@ -3416,7 +3416,8 @@ namespace C99
                 {
                     string host = string.IsNullOrWhiteSpace(LLamaHost?.Text) ? "127.0.0.1" : LLamaHost.Text.Trim();
                     int port = int.TryParse(LLamaPort?.Text, out var p) && p > 0 ? p : 8080;
-                    return ($"http://{host}:{port}/v1/chat/completions", "local-model", port);
+                    // host 为底座的绑定地址（可能填 0.0.0.0 监听所有网卡），连接时归一化为本机回环
+                    return (C99.Models.DreamFactoryConfig.NormalizeConnectableUrl($"http://{host}:{port}/v1/chat/completions"), "local-model", port);
                 }
                 case "ollama":
                     return ("http://localhost:11434/v1/chat/completions", GetSelectedModelDirName() ?? "local-model", 11434);
@@ -3586,7 +3587,11 @@ namespace C99
                 {
                     var json = System.IO.File.ReadAllText(configPath);
                     var cfg = System.Text.Json.JsonSerializer.Deserialize<DreamFactoryConfig>(json);
-                    if (cfg != null) _dreamConfig = cfg;
+                    if (cfg != null)
+                    {
+                        _dreamConfig = cfg;
+                        MigrateGatewayUpstreamConfig();
+                    }
                 }
             }
             catch (Exception ex) { Debug.WriteLine($"加载AI梦工厂配置失败: {ex.Message}"); }
@@ -3594,6 +3599,25 @@ namespace C99
             _isLoadingDreamConfig = true;
             ApplyDreamConfigToUI();
             _isLoadingDreamConfig = false;
+        }
+
+        /// <summary>旧版「完整基地址」升级为「路径后缀」：把旧 UpstreamUrl 的路径部分迁移进 UpstreamPath（基地址改为固定跟随 AI 模型配置）</summary>
+        private void MigrateGatewayUpstreamConfig()
+        {
+            var gw = _dreamConfig.GatewayConfig;
+            if (!string.IsNullOrWhiteSpace(gw.UpstreamPath) || string.IsNullOrWhiteSpace(gw.UpstreamUrl)) return;
+            try
+            {
+                if (Uri.TryCreate(gw.UpstreamUrl.Trim(), UriKind.Absolute, out var uri))
+                {
+                    string path = uri.PathAndQuery.TrimEnd('/');
+                    if (!path.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+                        path += "/chat/completions";
+                    gw.UpstreamPath = path.StartsWith("/", StringComparison.Ordinal) ? path : "/" + path;
+                }
+                gw.UpstreamUrl = "";
+            }
+            catch (Exception ex) { Debug.WriteLine($"迁移网关上游配置失败: {ex.Message}"); }
         }
 
         private void SaveDreamFactoryConfig()
@@ -3662,7 +3686,7 @@ namespace C99
             if (GatewayEnabledToggle != null)
                 GatewayEnabledToggle.IsChecked = _dreamConfig.GatewayConfig.Enabled;
             if (GatewayUpstreamBox != null)
-                GatewayUpstreamBox.Text = _dreamConfig.GatewayConfig.UpstreamUrl;
+                GatewayUpstreamBox.Text = _dreamConfig.GatewayConfig.UpstreamPath;
 
             UpdateDreamFactoryStatusUI();
             RefreshGatewayStatusUI();
@@ -3741,7 +3765,7 @@ namespace C99
             if (GatewayEnabledToggle != null)
                 _dreamConfig.GatewayConfig.Enabled = GatewayEnabledToggle.IsChecked == true;
             if (GatewayUpstreamBox != null)
-                _dreamConfig.GatewayConfig.UpstreamUrl = GatewayUpstreamBox.Text.Trim();
+                _dreamConfig.GatewayConfig.UpstreamPath = GatewayUpstreamBox.Text.Trim();
         }
 
         private void UpdateDreamFactoryStatusUI()
@@ -4133,7 +4157,7 @@ namespace C99
         private void OnGatewayUpstreamChanged(object sender, TextChangedEventArgs e)
         {
             if (_isLoadingDreamConfig) return;
-            _dreamConfig.GatewayConfig.UpstreamUrl = GatewayUpstreamBox?.Text.Trim() ?? "";
+            _dreamConfig.GatewayConfig.UpstreamPath = GatewayUpstreamBox?.Text.Trim() ?? "";
             SaveDreamFactoryConfig();
             RefreshGatewayStatusUI();
         }
@@ -4153,9 +4177,12 @@ namespace C99
 
             GatewayAddressText.Text = $"http://127.0.0.1:{_dreamConfig.Port}/gateway/v1/chat/completions";
 
-            string upstream = string.IsNullOrWhiteSpace(_dreamConfig.GatewayConfig.UpstreamUrl)
-                ? $"跟随当前「AI 模型配置」（{_dreamConfig.GetEffectiveApiUrl()}）"
-                : _dreamConfig.GatewayConfig.UpstreamUrl;
+            string suffix = _dreamConfig.GatewayConfig.UpstreamPath.Trim();
+            string resolved = _dreamFactoryService?.ResolveGatewayUpstreamUrl()
+                              ?? _dreamConfig.GetEffectiveApiUrl();
+            string upstream = string.IsNullOrWhiteSpace(suffix)
+                ? $"跟随「AI 模型配置」（{resolved}）"
+                : $"基地址「AI 模型配置」+ 后缀{suffix} → {resolved}";
 
             bool enabled = _dreamConfig.GatewayConfig.Enabled;
             bool serviceOn = _dreamFactoryService?.IsRunning == true;

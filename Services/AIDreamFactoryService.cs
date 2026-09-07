@@ -63,6 +63,9 @@ namespace C99.Services
 
         public bool IsRunning => _isRunning;
 
+        /// <summary>解析模型网关当前上游 chat 完整地址（基地址跟随「AI 模型配置」+ 可自定义路径后缀）</summary>
+        public string ResolveGatewayUpstreamUrl() => _gateway.ResolveUpstreamChatUrl();
+
         public AIDreamFactoryService(DreamFactoryConfig config)
         {
             _config = config;
@@ -226,8 +229,7 @@ namespace C99.Services
                     {
                         status = "ok",
                         gateway = true,
-                        upstream = string.IsNullOrWhiteSpace(_config.GatewayConfig.UpstreamUrl)
-                            ? _config.GetEffectiveApiUrl() : _config.GatewayConfig.UpstreamUrl
+                        upstream = _gateway.ResolveUpstreamChatUrl()
                     });
                 }
                 else if (path.StartsWith("/gateway/v1/", StringComparison.OrdinalIgnoreCase))

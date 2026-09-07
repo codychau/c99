@@ -34,8 +34,11 @@ namespace C99.Models
         /// <summary>是否启用网关路由（关闭后 /gateway/v1/* 返回 404）</summary>
         public bool Enabled { get; set; } = true;
 
-        /// <summary>上游 OpenAI 兼容地址。留空 = 跟随当前「AI 模型配置」生效地址；可填完整地址或 /v1 基地址</summary>
+        /// <summary>旧版「上游完整基地址」字段，已废弃，仅用于读取旧配置并一次性迁移为 UpstreamPath</summary>
         public string UpstreamUrl { get; set; } = "";
+
+        /// <summary>上游路径后缀：网关把 chat 请求转发到「AI 模型配置」基地址 + 该后缀（如 /v1/chat/completions）。留空 = 完全跟随生效地址</summary>
+        public string UpstreamPath { get; set; } = "";
 
         /// <summary>是否已展示过「模型网关」工作流的欢迎说明</summary>
         public bool HintShown { get; set; }
@@ -148,17 +151,32 @@ namespace C99.Models
             {
                 // 优先使用由 AI 启动底座推导出的地址（端口等与底座配置保持一致）
                 if (!string.IsNullOrEmpty(BuiltInApiUrl))
-                    return BuiltInApiUrl;
-                return BuiltInModel switch
+                    return NormalizeConnectableUrl(BuiltInApiUrl);
+                return NormalizeConnectableUrl(BuiltInModel switch
                 {
                     "llama.cpp" or "Local llama.cpp" => "http://127.0.0.1:8080/v1/chat/completions",
                     "ollama" or "Local ollama" => "http://localhost:11434/v1/chat/completions",
                     "vllm" or "Local vllm" => "http://localhost:8000/v1/chat/completions",
                     "lmstudio" or "Local lmstudio" => "http://127.0.0.1:1234/v1/chat/completions",
                     _ => "http://127.0.0.1:8080/v1/chat/completions",
-                };
+                });
             }
-            return CustomApiUrl;
+            return NormalizeConnectableUrl(CustomApiUrl);
+        }
+
+        /// <summary>
+        /// 归一化连接目标地址：0.0.0.0 / ::0 等通配绑定地址不可作为连接目标（HttpClient 会直接报错），
+        /// 统一替换为本机回环 127.0.0.1；并去掉末尾斜杠。
+        /// </summary>
+        public static string NormalizeConnectableUrl(string url)
+        {
+            string trimmed = url?.Trim().TrimEnd('/') ?? "";
+            if (trimmed.Length == 0) return "";
+            if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)) return trimmed;
+            string host = uri.Host.Trim('[', ']');
+            if (host == "0.0.0.0" || host == "::" || host == "::0" || host == "0:0:0:0:0:0:0:0")
+                return new UriBuilder(uri) { Host = "127.0.0.1" }.Uri.ToString().TrimEnd('/');
+            return trimmed;
         }
 
         /// <summary>获取实际使用的模型名称</summary>
