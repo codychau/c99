@@ -31,9 +31,6 @@ namespace C99.Models
     /// </summary>
     public class ModelGatewayConfig
     {
-        /// <summary>是否启用网关路由（关闭后 /gateway/v1/* 返回 404）</summary>
-        public bool Enabled { get; set; } = true;
-
         /// <summary>旧版「上游完整基地址」字段，已废弃，仅用于读取旧配置并一次性迁移为 UpstreamPath</summary>
         public string UpstreamUrl { get; set; } = "";
 

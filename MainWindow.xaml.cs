@@ -707,7 +707,7 @@ namespace C99
                 ("💰", "API费用"),
                 ("🏭", "梦工厂调用"),
                 ("🔧", "流水线步骤"),
-                ("💵", "AI底座费用"),
+                ("💵", "AI底座/网关费用"),
                 ("⏱️", "AI底座运行"),
                 ("💹", "总费用"),
                 ("📊", "预估月费用"),
@@ -3683,8 +3683,6 @@ namespace C99
             DreamFactoryMaxTokensText.Text = _dreamConfig.MaxTokens.ToString();
 
             // 模型网关配置
-            if (GatewayEnabledToggle != null)
-                GatewayEnabledToggle.IsChecked = _dreamConfig.GatewayConfig.Enabled;
             if (GatewayUpstreamBox != null)
                 GatewayUpstreamBox.Text = _dreamConfig.GatewayConfig.UpstreamPath;
 
@@ -3762,8 +3760,6 @@ namespace C99
             _dreamConfig.MaxTokens = (int)DreamFactoryMaxTokens.Value;
 
             // 模型网关配置
-            if (GatewayEnabledToggle != null)
-                _dreamConfig.GatewayConfig.Enabled = GatewayEnabledToggle.IsChecked == true;
             if (GatewayUpstreamBox != null)
                 _dreamConfig.GatewayConfig.UpstreamPath = GatewayUpstreamBox.Text.Trim();
         }
@@ -3783,12 +3779,7 @@ namespace C99
         private void StartDreamFactoryService()
         {
             UpdateDreamConfigFromUI();
-            // 同步外部大模型配置（从设置 → 梦工厂）
-            if (_dreamConfig.ModelSource == "Custom")
-            {
-                _dreamConfig.CustomApiUrl = _config.ExternalLLMApiUrl.TrimEnd('/') + "/chat/completions";
-                _dreamConfig.CustomApiKey = _config.ExternalLLMApiKey;
-            }
+            SyncExternalModelToDreamConfig();
             _dreamFactoryService?.Dispose();
             _dreamFactoryService = new AIDreamFactoryService(_dreamConfig);
             _dreamFactoryService.Metrics = _metricsService;
@@ -3801,6 +3792,14 @@ namespace C99
             _dreamFactoryService.KnowledgeSearcher = SearchKnowledgeBaseAsync;
             _dreamFactoryService.Start();
             UpdateDreamFactoryStatusUI();
+        }
+
+        /// <summary>同步设置页的外部大模型配置到梦工厂（仅 Custom 来源：地址 + "/chat/completions" 与 Key 跟随「设置」）</summary>
+        private void SyncExternalModelToDreamConfig()
+        {
+            if (_dreamConfig.ModelSource != "Custom") return;
+            _dreamConfig.CustomApiUrl = _config.ExternalLLMApiUrl.TrimEnd('/') + "/chat/completions";
+            _dreamConfig.CustomApiKey = _config.ExternalLLMApiKey;
         }
 
         /// <summary>知识库检索器：把问题向量化后在指定集合中召回 TopK 片段，返回拼接文本（HTTP 后台线程调用，需编组到 UI 线程）</summary>
@@ -4146,12 +4145,14 @@ namespace C99
 
         // ==================== 模型网关 ====================
 
-        private void OnGatewayEnabledChanged(object sender, RoutedEventArgs e)
+        /// <summary>重启网关：不中断 9527 服务，仅把「设置」页外部模型配置重新同步进网关上游，下一个请求即生效</summary>
+        private void OnGatewayRestartClick(object sender, RoutedEventArgs e)
         {
-            if (_isLoadingDreamConfig) return;
-            _dreamConfig.GatewayConfig.Enabled = GatewayEnabledToggle?.IsChecked == true;
+            UpdateDreamConfigFromUI();
+            SyncExternalModelToDreamConfig();
             SaveDreamFactoryConfig();
             RefreshGatewayStatusUI();
+            ShowToast("网关已重新同步上游配置");
         }
 
         private void OnGatewayUpstreamChanged(object sender, TextChangedEventArgs e)
@@ -4184,14 +4185,11 @@ namespace C99
                 ? $"跟随「AI 模型配置」（{resolved}）"
                 : $"基地址「AI 模型配置」+ 后缀{suffix} → {resolved}";
 
-            bool enabled = _dreamConfig.GatewayConfig.Enabled;
             bool serviceOn = _dreamFactoryService?.IsRunning == true;
 
-            GatewayStatus.Text = !enabled
-                ? "● 网关未启用：/gateway/v1/* 将返回 404（勾选上方「启用」后生效）"
-                : serviceOn
-                    ? $"● 网关运行中（端口 {_dreamConfig.Port}）。上游：{upstream}"
-                    : $"● 网关已启用，但梦工厂 HTTP 服务未运行（需先启动服务）。上游：{upstream}";
+            GatewayStatus.Text = serviceOn
+                ? $"● 网关运行中（端口 {_dreamConfig.Port}）。上游：{upstream}"
+                : $"● 网关随梦工厂 HTTP 服务启动（需先点「▶ 启动」）。上游：{upstream}";
         }
 
         /// <summary>复制文本到剪贴板（P/Invoke，打包/免打包均可用）</summary>

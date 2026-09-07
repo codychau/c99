@@ -345,9 +345,8 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <CheckBox Grid.Column="0" x:Name="GatewayEnabledToggle" Content="启用"
-                                              FontSize="13" VerticalAlignment="Center"
-                                              Checked="OnGatewayEnabledChanged" Unchecked="OnGatewayEnabledChanged"/>
+                                    <Button Grid.Column="0" x:Name="GatewayRestartBtn" Content="重启网关"
+                                            FontSize="13" Height="32" Click="OnGatewayRestartClick"/>
                                     <Button Grid.Column="2" x:Name="GatewayCopyBtn" Content="复制网关地址"
                                             FontSize="12" Height="32" Click="OnGatewayCopyClick"/>
                                 </Grid>

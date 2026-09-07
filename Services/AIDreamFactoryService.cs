@@ -206,13 +206,6 @@ namespace C99.Services
         /// <summary>模型网关路由：/gateway/v1/* 转发到上游并统计 Token</summary>
         private async Task HandleGatewayAsync(HttpListenerRequest request, HttpListenerResponse response, string path)
         {
-            if (!_config.GatewayConfig.Enabled)
-            {
-                response.StatusCode = 404;
-                await WriteJsonAsync(response, new { error = "模型网关未启用，请在「AI梦工厂 → 模型网关」工作流中开启" });
-                return;
-            }
-
             try
             {
                 if (path.Equals("/gateway/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
