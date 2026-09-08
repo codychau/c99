@@ -116,6 +116,11 @@
                                 <TextBlock Text="端口：" VerticalAlignment="Center" FontSize="13"/>
                                 <TextBox x:Name="DreamFactoryPort" Width="80" Height="32"
                                          Text="9527" FontSize="13" Margin="4,0,12,0"/>
+                                <CheckBox x:Name="DreamFactoryAllowExternal" Content="允许外部访问"
+                                          VerticalAlignment="Center" FontSize="13" Margin="4,0,12,0"
+                                          ToolTipService.ToolTip="勾选后绑定 0.0.0.0，局域网设备可访问；/report、/api/kb/query、/api/config 无鉴权；改动需重启服务生效"
+                                          Checked="OnDreamFactoryAllowExternalChecked"
+                                          Unchecked="OnDreamFactoryAllowExternalUnchecked"/>
                                 <TextBlock x:Name="DreamFactoryStatus"
                                            Text="● 未启动" FontSize="13" Foreground="Gray" VerticalAlignment="Center"/>
                             </StackPanel>

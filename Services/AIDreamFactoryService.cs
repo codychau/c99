@@ -82,12 +82,46 @@ namespace C99.Services
             {
                 _cts = new CancellationTokenSource();
                 _listener = new HttpListener();
-                _listener.Prefixes.Add($"http://localhost:{_config.Port}/");
-                _listener.Prefixes.Add($"http://127.0.0.1:{_config.Port}/");
-                _listener.Start();
-                _isRunning = true;
+                bool boundAllInterfaces;
 
-                Log($"HTTP 服务已启动: http://localhost:{_config.Port}/");
+                // 优先尝试绑定 0.0.0.0（若该端口已存在「+ URL 保留」即可非管理员绑定）；
+                // 失败时：已勾选外部访问 → 提示注册保留后启动失败；未勾选 → 退回仅监听回环。
+                _listener.Prefixes.Add($"http://+:{_config.Port}/");
+                try
+                {
+                    _listener.Start();
+                    boundAllInterfaces = true;
+                }
+                catch (HttpListenerException ex) when (ex.ErrorCode == 5)
+                {
+                    _listener.Close();
+                    _listener = new HttpListener();
+                    if (_config.AllowExternalAccess)
+                    {
+                        // URL 保留缺失（首次从未勾选、或端口变更）：不在启动期间弹 UAC，
+                        // 由 UI 在「勾选允许外部访问」时触发注册
+                        Log($"绑定 http://0.0.0.0:{_config.Port}/ 被拒绝：该端口缺少 URL 保留，普通权限无法监听。");
+                        Log("请先取消勾选再勾选「允许外部访问」，在弹出的授权中确认后自动注册；或以管理员身份执行一次 netsh http add urlacl url=http://+:{_config.Port}/ user=Everyone");
+                        throw new HttpListenerException(ex.ErrorCode,
+                            "缺少 0.0.0.0 URL 保留，无法开启外部访问。");
+                    }
+                    else
+                    {
+                        Log("未开启外部访问且 0.0.0.0 绑定被拒绝，退回仅监听本机回环地址。");
+                        _listener.Prefixes.Add($"http://localhost:{_config.Port}/");
+                        _listener.Prefixes.Add($"http://127.0.0.1:{_config.Port}/");
+                        _listener.Start();
+                        boundAllInterfaces = false;
+                    }
+                }
+
+                _isRunning = true;
+                string listenDesc = boundAllInterfaces
+                    ? (_config.AllowExternalAccess
+                        ? $"http://0.0.0.0:{_config.Port}/（已允许外部访问）"
+                        : $"http://0.0.0.0:{_config.Port}/（未允许外部访问，仅本机可访问）")
+                    : $"http://localhost:{_config.Port}/";
+                Log($"HTTP 服务已启动: {listenDesc}");
 
                 // 后台处理请求
                 _ = Task.Run(() => ListenLoop(_cts.Token));
@@ -95,8 +129,61 @@ namespace C99.Services
             catch (Exception ex)
             {
                 Log($"启动 HTTP 服务失败: {ex.Message}");
-                Log($"提示：可能需要以管理员身份运行，或端口 {_config.Port} 已被占用");
+                if (_config.AllowExternalAccess)
+                    Log($"提示：缺少 0.0.0.0 的 URL 保留。请先取消勾选再勾选「允许外部访问」以触发授权注册，或用管理员身份执行一次 netsh http add urlacl url=http://+:{_config.Port}/ user=Everyone。");
+                else
+                    Log($"提示：端口 {_config.Port} 可能已被占用，或 0.0.0.0 上的 URL 保留阻止了回环绑定。");
                 _isRunning = false;
+            }
+        }
+
+        /// <summary>查询某端口是否已存在 http://+:port/ 的 URL 保留（无需管理员权限）</summary>
+        public static bool UrlAclExists(int port)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("netsh", $"http show urlacl url=http://+:{port}/")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                using var p = Process.Start(psi);
+                if (p == null) return false;
+                string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+                p.WaitForExit(15000);
+                return output.Contains($"http://+:{port}/", StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 通过 UAC 提权执行 netsh 添加 URL 保留，使非管理员的 HttpListener 也能监听 0.0.0.0。
+        /// 返回是否添加成功（用户拒绝 UAC / 非管理员返回 false）。
+        /// </summary>
+        public static bool TryRegisterUrlAcl(int port)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("netsh", $"http add urlacl url=http://+:{port}/ user=Everyone")
+                {
+                    Verb = "runas",
+                    UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    CreateNoWindow = true
+                };
+                using var p = Process.Start(psi);
+                if (p == null) return false;
+                if (!p.WaitForExit(30000)) return false;
+                return p.ExitCode == 0;
+            }
+            catch (Exception)
+            {
+                return false;
             }
         }
 
@@ -128,10 +215,37 @@ namespace C99.Services
             }
         }
 
+        /// <summary>判断请求来源是否为本机回环地址（127.0.0.1 / localhost / ::1）</summary>
+        private static bool IsLoopbackRequest(HttpListenerRequest request)
+        {
+            try
+            {
+                var ep = request.RemoteEndPoint;
+                if (ep?.Address == null) return true; // 无法判断时放行，避免误伤
+                return IPAddress.IsLoopback(ep.Address);
+            }
+            catch (Exception)
+            {
+                return true; // 保守放行
+            }
+        }
+
         private async Task HandleRequestAsync(HttpListenerContext context)
         {
             var request = context.Request;
             var response = context.Response;
+
+            // 未开启外部访问时，仅允许本机回环来源（处理「已存在 0.0.0.0 URL 保留但仍仅想本机使用」的情况）
+            if (!_config.AllowExternalAccess && !IsLoopbackRequest(request))
+            {
+                response.StatusCode = 403;
+                response.StatusDescription = "Forbidden";
+                byte[] body = Encoding.UTF8.GetBytes("外部访问未开启，仅允许本机访问。");
+                response.ContentType = "text/plain; charset=utf-8";
+                response.OutputStream.Write(body, 0, body.Length);
+                response.Close();
+                return;
+            }
 
             // CORS
             response.Headers.Add("Access-Control-Allow-Origin", "*");

@@ -3670,6 +3670,8 @@ namespace C99
         private void ApplyDreamConfigToUI()
         {
             DreamFactoryPort.Text = _dreamConfig.Port.ToString();
+            if (DreamFactoryAllowExternal != null)
+                DreamFactoryAllowExternal.IsChecked = _dreamConfig.AllowExternalAccess;
             // 恢复当前工作流模式（主流程 / 知识库检索流程）
             ApplyWorkflowModeButtons();
 
@@ -3746,6 +3748,8 @@ namespace C99
             if (DreamFactoryPort == null || DreamFactoryWorkflowName == null) return;
             if (int.TryParse(DreamFactoryPort.Text, out int port) && port > 0 && port < 65536)
                 _dreamConfig.Port = port;
+            if (DreamFactoryAllowExternal != null)
+                _dreamConfig.AllowExternalAccess = DreamFactoryAllowExternal.IsChecked == true;
 
             // 按当前模式保存对应的工作流名称
             if (_dreamConfig.CurrentWorkflowMode == DreamWorkflowMode.KnowledgeBase)
@@ -3800,6 +3804,8 @@ namespace C99
                 : new SolidColorBrush(Microsoft.UI.Colors.Gray);
             DreamFactoryToggleBtn.Content = running ? "⏹ 停止" : "▶ 启动";
             DreamFactoryPort.IsEnabled = !running;
+            if (DreamFactoryAllowExternal != null)
+                DreamFactoryAllowExternal.IsEnabled = !running;
             RefreshGatewayStatusUI();
         }
 
@@ -4130,6 +4136,45 @@ namespace C99
 
         private void OnDreamFactoryConfigChanged(object sender, object e)
         {
+            SaveDreamFactoryConfig();
+        }
+
+        private async void OnDreamFactoryAllowExternalChecked(object sender, RoutedEventArgs e)
+        {
+            if (_isLoadingDreamConfig) return;
+            bool ok = await OnGenericPopupConfirmAsync("允许外部访问",
+                "勾选后将把 HTTP 服务绑定到 0.0.0.0，局域网内的其他设备可访问本服务。\n\n" +
+                "注意：/report、/api/kb/query、/api/config 等端点没有鉴权，任何能连上该端口的设备都可直接访问。\n\n" +
+                "是否确认启用？");
+            if (!ok) { DreamFactoryAllowExternal.IsChecked = false; return; }
+            SaveDreamFactoryConfig();
+
+            int port = 9527;
+            if (int.TryParse(DreamFactoryPort.Text, out int p) && p > 0 && p <= 65535)
+                port = p;
+
+            // 仅当本机还没有该端口的 0.0.0.0 URL 保留时才需要授权注册（首次勾选触发一次）
+            if (!C99.Services.AIDreamFactoryService.UrlAclExists(port))
+            {
+                bool registered = await Task.Run(() => C99.Services.AIDreamFactoryService.TryRegisterUrlAcl(port));
+                if (!registered)
+                {
+                    DreamFactoryAllowExternal.IsChecked = false;
+                    SaveDreamFactoryConfig();
+                    await OnGenericPopupNotifyAsync("允许外部访问",
+                        "未能注册 URL 保留（可能取消了授权）。已取消勾选，服务仍仅本机可访问。", 6);
+                }
+                else
+                {
+                    await OnGenericPopupNotifyAsync("允许外部访问",
+                        "URL 保留注册成功，外部访问已启用。", 4);
+                }
+            }
+        }
+
+        private void OnDreamFactoryAllowExternalUnchecked(object sender, RoutedEventArgs e)
+        {
+            if (_isLoadingDreamConfig) return;
             SaveDreamFactoryConfig();
         }
 

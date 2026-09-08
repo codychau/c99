@@ -83,6 +83,9 @@ namespace C99.Models
         /// <summary>是否自动启动 HTTP 服务</summary>
         public bool AutoStart { get; set; } = true;
 
+        /// <summary>允许外部访问：HTTP 服务绑定 0.0.0.0（局域网可访问）；默认 false 仅回环</summary>
+        public bool AllowExternalAccess { get; set; } = false;
+
         /// <summary>AI 模型来源：BuiltIn / Custom</summary>
         public string ModelSource { get; set; } = "BuiltIn";
 
