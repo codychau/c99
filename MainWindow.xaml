@@ -543,22 +543,26 @@
                                                     <Button Grid.Column="1" Content="选择文件..." FontSize="12" Height="32"
                                                             Click="OnKbBrowseLocalModelFile"/>
                                                 </Grid>
-                                                <TextBlock Text="本地端口" FontSize="13" Margin="0,0,0,4"/>
-                                                <TextBox x:Name="KbLocalEmbeddingPort" Grid.Column="0" Width="120" Height="32"
-                                                         FontSize="13" HorizontalAlignment="Left"/>
+<Grid ColumnSpacing="8" Margin="0,0,0,10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="本地端口" FontSize="13" VerticalAlignment="Center"/>
+                                                    <TextBox x:Name="KbLocalEmbeddingPort" Grid.Column="1" Width="100" Height="32"
+                                                             FontSize="13" HorizontalAlignment="Left"/>
+                                                    <TextBlock Grid.Column="2" Text="GPU 层数" FontSize="13" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                                    <TextBox x:Name="KbGpuLayers" Grid.Column="3" Width="90" Height="32"
+                                                             FontSize="13" Text="-1" HorizontalAlignment="Left"/>
+                                                    <TextBlock Grid.Column="4" Text="向量维度" FontSize="13" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                                    <TextBox x:Name="KbDimension" Grid.Column="5" Width="90" Height="32"
+                                                             FontSize="13" Text="1536" HorizontalAlignment="Left"/>
+                                                </Grid>
                                             </StackPanel>
-
-                                             <!-- 向量维度（两种模式共用） -->
-                                             <Grid ColumnSpacing="8" Margin="0,10,0,0">
-                                                 <Grid.ColumnDefinitions>
-                                                     <ColumnDefinition Width="*"/>
-                                                     <ColumnDefinition Width="Auto"/>
-                                                     <ColumnDefinition Width="Auto"/>
-                                                 </Grid.ColumnDefinitions>
-                                                 <TextBlock Grid.Column="0" Text="向量维度" FontSize="13" VerticalAlignment="Center"/>
-                                                 <TextBox x:Name="KbDimension" Grid.Column="1" Width="90" Height="32"
-                                                          FontSize="13" Text="1536" Margin="8,0,0,0"/>
-                                             </Grid>
 
                                              <!-- 并行文件数设置 -->
                                              <Grid ColumnSpacing="8" Margin="0,10,0,0">
@@ -575,8 +579,14 @@
                                                           Text="3" HorizontalAlignment="Left" Margin="8,0,0,0"
                                                           IsEnabled="False" HorizontalContentAlignment="Center"/>
                                              </Grid>
+
+                                             <!-- 本地 llama-server 日志 -->
+                                             <TextBlock Text="本地 llama-server 日志" FontSize="13" Margin="0,12,0,4"/>
+                                             <TextBox x:Name="KbLlamaServerLog" Height="64" FontSize="11"
+                                                      IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
+                                                      PlaceholderText="启动后这里显示 llama-server 的输出（含错误）…"/>
                                          </StackPanel>
-                                    </Border>
+                                     </Border>
 
                                     <!-- 向量数据库设置 -->
                                     <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16">
@@ -668,7 +678,7 @@
                                                           PlaceholderText="选择集合..." SelectionChanged="OnKbCollectionChanged"/>
                                                 <TextBox x:Name="KbNewCollectionName" Grid.Column="1" Height="34" FontSize="13"
                                                          PlaceholderText="新建集合名称"/>
-                                                <Button Grid.Column="2" Content="新建" FontSize="12" Height="34" Width="54"
+                                                <Button Grid.Column="2" x:Name="KbCreateCollectionBtn" Content="新建" FontSize="12" Height="34" Width="54"
                                                         Margin="8,0,0,0" Click="OnKbCreateCollection"/>
                                                 <Button Grid.Column="3" Content="删除" FontSize="12" Height="34" Width="54"
                                                         Margin="8,0,0,0" Click="OnKbDropCollection"/>
@@ -711,15 +721,18 @@
                                              </Grid>
 
 <Grid Margin="0,4,0,8">
-                                                  <Grid.ColumnDefinitions>
-                                                      <ColumnDefinition Width="*"/>
-                                                      <ColumnDefinition Width="Auto"/>
-                                                  </Grid.ColumnDefinitions>
-                                                  <TextBlock Grid.Column="0" x:Name="KbDocCount" Text="文档列表" FontSize="13"
-                                                             Foreground="Gray" VerticalAlignment="Center"/>
-                                                  <Button Grid.Column="1" Content="🗑 删除选中" FontSize="12" Height="30"
-                                                          Click="OnKbDeleteSelected"/>
-                                              </Grid>
+                                                   <Grid.ColumnDefinitions>
+                                                       <ColumnDefinition Width="*"/>
+                                                       <ColumnDefinition Width="Auto"/>
+                                                       <ColumnDefinition Width="Auto"/>
+                                                   </Grid.ColumnDefinitions>
+                                                   <TextBlock Grid.Column="0" x:Name="KbDocCount" Text="文档列表" FontSize="13"
+                                                              Foreground="Gray" VerticalAlignment="Center"/>
+                                                   <Button Grid.Column="1" Content="☑ 全选" FontSize="12" Height="30"
+                                                           Margin="0,0,8,0" Click="OnKbSelectAll"/>
+                                                   <Button Grid.Column="2" Content="🗑 删除选中" FontSize="12" Height="30"
+                                                           Click="OnKbDeleteSelected"/>
+                                               </Grid>
                                               <TreeView x:Name="KbDocsTree" Height="180" FontSize="13"
                                                         SelectionMode="Multiple">
 <TreeView.ItemTemplate>

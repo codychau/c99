@@ -95,8 +95,10 @@ namespace C99.Services
                 {
                     if (c.Embedding == null || c.Embedding.Length == 0)
                         c.Embedding = FallbackHashEmbedding(c.Content, _native!.Dimension);
-                    // 向量维度必须与集合维度一致，否则原生端入库必然失败（常见原因：换过嵌入模型/维度配置）
-                    if (c.Embedding.Length != _native!.Dimension)
+                    // 向量维度必须与集合维度一致，否则原生端入库必然失败（常见原因：换过嵌入模型/维度配置）。
+                    // 仅当本会话已知集合维度时才预检；持久化集合重启后未在本会话创建，_native.Dimension 为 0（未知），
+                    // 交给原生端自己校验，避免误拦截。
+                    if (_native!.Dimension > 0 && c.Embedding.Length != _native.Dimension)
                     {
                         problems.Add($"片段维度 {c.Embedding.Length} 与集合维度 {_native.Dimension} 不一致");
                         continue;

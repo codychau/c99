@@ -46,6 +46,9 @@ namespace C99.Models
         /// <summary>本地启动：embedding 服务端口</summary>
         public int LocalEmbeddingPort { get; set; } = 18080;
 
+        /// <summary>本地启动：GPU 层数（-1=全量进 GPU，0=纯 CPU）</summary>
+        public int GpuLayers { get; set; } = -1;
+
         /// <summary>向量数据库类型</summary>
         public VectorDbType DbType { get; set; } = VectorDbType.BuiltIn;
 
