@@ -25,6 +25,11 @@ namespace C99.Services
         private System.Diagnostics.Process? _localServer;
         private readonly object _localLock = new();
 
+        // 定期重启栅栏：重启期间阻止新请求进入，待全部在途请求结束后再强杀/重启服务，避免边杀边调造成崩溃
+        private readonly object _localRunLock = new();
+        private int _localInFlight;
+        private readonly System.Threading.ManualResetEventSlim _localGate = new(true);
+
         /// <summary>llama-server 进程输出/错误 日志回调（供界面显示启动日志与异常退出原因）。可为 null。</summary>
         public Action<string>? OnLocalServerLog;
 
@@ -79,37 +84,45 @@ namespace C99.Services
         /// </summary>
         private async Task<float[]> EmbedLocalAsync(string text, KnowledgeBaseConfig config)
         {
-            EnsureLocalServerStarted(config);
-            await WaitLocalServerReadyAsync(config);
-            string url = $"http://127.0.0.1:{config.LocalEmbeddingPort}/v1/embeddings";
-            string modelId = Path.GetFileNameWithoutExtension(config.LocalModelFile);
+            await EnterLocalServerAsync(CancellationToken.None);
+            try
+            {
+                EnsureLocalServerStarted(config);
+                await WaitLocalServerReadyAsync(config);
+                string url = $"http://127.0.0.1:{config.LocalEmbeddingPort}/v1/embeddings";
+                string modelId = Path.GetFileNameWithoutExtension(config.LocalModelFile);
 
-            var resp = await SendEmbeddingRequestAsync(() =>
-            {
-                return new HttpRequestMessage(HttpMethod.Post, url)
+                var resp = await SendEmbeddingRequestAsync(() =>
                 {
-                    Content = new StringContent(
-                        JsonSerializer.Serialize(new { model = modelId, input = text }),
-                        Encoding.UTF8, "application/json")
-                };
-            }, CancellationToken.None);
-            if (!resp.IsSuccessStatusCode)
-            {
-                var errBody = await resp.Content.ReadAsStringAsync();
-                throw new Exception($"本地向量模型调用失败: HTTP {(int)resp.StatusCode} {errBody}");
+                    return new HttpRequestMessage(HttpMethod.Post, url)
+                    {
+                        Content = new StringContent(
+                            JsonSerializer.Serialize(new { model = modelId, input = text }),
+                            Encoding.UTF8, "application/json")
+                    };
+                }, CancellationToken.None);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    var errBody = await resp.Content.ReadAsStringAsync();
+                    throw new Exception($"本地向量模型调用失败: HTTP {(int)resp.StatusCode} {errBody}");
+                }
+                var body = await resp.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
+                    throw new Exception("本地向量模型返回为空");
+                var emb = data[0].GetProperty("embedding");
+                var list = new List<float>();
+                foreach (var item in emb.EnumerateArray())
+                    list.Add(item.GetSingle());
+                // 若返回维度与配置不一致，以服务实际维度为准
+                config.Dimension = list.Count;
+                return list.ToArray();
             }
-            var body = await resp.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
-                throw new Exception("本地向量模型返回为空");
-            var emb = data[0].GetProperty("embedding");
-            var list = new List<float>();
-            foreach (var item in emb.EnumerateArray())
-                list.Add(item.GetSingle());
-            // 若返回维度与配置不一致，以服务实际维度为准
-            config.Dimension = list.Count;
-            return list.ToArray();
+            finally
+            {
+                ExitLocalServer();
+            }
         }
 
         /// <summary>确保本地 llama.cpp embedding 服务已启动（并等待就绪）</summary>
@@ -280,31 +293,39 @@ namespace C99.Services
         /// <summary>本地 llama-server 批量向量化（一次请求传多条）</summary>
         private async Task<List<float[]>> EmbedLocalBatchAsync(List<string> texts, KnowledgeBaseConfig config, CancellationToken ct)
         {
-            EnsureLocalServerStarted(config);
-            await WaitLocalServerReadyAsync(config);
-            string url = $"http://127.0.0.1:{config.LocalEmbeddingPort}/v1/embeddings";
-            string modelId = Path.GetFileNameWithoutExtension(config.LocalModelFile);
+            await EnterLocalServerAsync(ct);
+            try
+            {
+                EnsureLocalServerStarted(config);
+                await WaitLocalServerReadyAsync(config);
+                string url = $"http://127.0.0.1:{config.LocalEmbeddingPort}/v1/embeddings";
+                string modelId = Path.GetFileNameWithoutExtension(config.LocalModelFile);
 
-            var resp = await SendEmbeddingRequestAsync(() =>
-            {
-                return new HttpRequestMessage(HttpMethod.Post, url)
+                var resp = await SendEmbeddingRequestAsync(() =>
                 {
-                    Content = new StringContent(
-                        JsonSerializer.Serialize(new { model = modelId, input = texts }),
-                        Encoding.UTF8, "application/json")
-                };
-            }, ct);
-            if (!resp.IsSuccessStatusCode)
-            {
-                var errBody = await resp.Content.ReadAsStringAsync();
-                throw new Exception($"本地向量模型调用失败: HTTP {(int)resp.StatusCode} {errBody}");
+                    return new HttpRequestMessage(HttpMethod.Post, url)
+                    {
+                        Content = new StringContent(
+                            JsonSerializer.Serialize(new { model = modelId, input = texts }),
+                            Encoding.UTF8, "application/json")
+                    };
+                }, ct);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    var errBody = await resp.Content.ReadAsStringAsync();
+                    throw new Exception($"本地向量模型调用失败: HTTP {(int)resp.StatusCode} {errBody}");
+                }
+                var body = await resp.Content.ReadAsStringAsync();
+                var result = ParseEmbeddings(body, texts.Count);
+                // 以服务实际维度为准
+                if (result.Count > 0 && result[0].Length > 0)
+                    config.Dimension = result[0].Length;
+                return result;
             }
-            var body = await resp.Content.ReadAsStringAsync();
-            var result = ParseEmbeddings(body, texts.Count);
-            // 以服务实际维度为准
-            if (result.Count > 0 && result[0].Length > 0)
-                config.Dimension = result[0].Length;
-            return result;
+            finally
+            {
+                ExitLocalServer();
+            }
         }
 
         /// <summary>解析 /embeddings 响应（data 数组，按 index 对齐输入顺序）</summary>
@@ -350,6 +371,68 @@ namespace C99.Services
                 catch { }
                 _localServer = null;
             }
+        }
+
+        /// <summary>
+        /// 定期重启本地向量模型：阻止新请求进入 → 等待在途请求全部结束 → 强杀并重新拉起 llama-server → 放行旧请求继续。
+        /// 用于向量化过程中按设定间隔重启模型，避免长时间运行后服务退化。
+        /// </summary>
+        public async Task RestartLocalServerAsync(KnowledgeBaseConfig config, CancellationToken ct = default)
+        {
+            _localGate.Reset();
+            try
+            {
+                // 等所有已进入的请求结束（尽量少的人还在路上）
+                while (true)
+                {
+                    lock (_localRunLock)
+                    {
+                        if (_localInFlight == 0) break;
+                    }
+                    ct.ThrowIfCancellationRequested();
+                    await Task.Delay(50, ct);
+                }
+
+                OnLocalServerLog?.Invoke("🔄 定时重启向量模型…");
+                lock (_localLock)
+                {
+                    try
+                    {
+                        if (_localServer != null && !_localServer.HasExited)
+                        {
+                            _localServer.Kill();
+                            _localServer.WaitForExit(3000);
+                        }
+                    }
+                    catch { }
+                    _localServer = null;
+                }
+
+                // 重新拉起并等待就绪
+                EnsureLocalServerStarted(config);
+                await WaitLocalServerReadyAsync(config);
+                OnLocalServerLog?.Invoke("✅ 向量模型重启完成");
+            }
+            finally
+            {
+                _localGate.Set();
+            }
+        }
+
+        /// <summary>进入本地向量服务：等待重启栅栏（重启期间排队），随后登记一个在途请求。</summary>
+        private async Task EnterLocalServerAsync(CancellationToken ct)
+        {
+            while (!_localGate.IsSet)
+            {
+                ct.ThrowIfCancellationRequested();
+                await Task.Delay(50, ct);
+            }
+            lock (_localRunLock) { _localInFlight++; }
+        }
+
+        private void ExitLocalServer()
+        {
+            lock (_localRunLock) { _localInFlight--; }
         }
 
         public void Dispose()

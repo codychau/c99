@@ -49,6 +49,15 @@ namespace C99.Models
         /// <summary>本地启动：GPU 层数（-1=全量进 GPU，0=纯 CPU）</summary>
         public int GpuLayers { get; set; } = -1;
 
+        /// <summary>本地启动：向量模型每隔 N 分钟自动重启（0=不重启，最多 30 分钟）</summary>
+        public int RestartModelMinutes { get; set; } = 0;
+
+        /// <summary>常规选项：是否禁止扫描指定后缀的文件</summary>
+        public bool EnableScanExclude { get; set; } = false;
+
+        /// <summary>常规选项：禁止扫描的文件后缀列表（逗号分隔，如 ".exe,.dll,.db"）</summary>
+        public string ScanExcludeExtensions { get; set; } = "";
+
         /// <summary>向量数据库类型</summary>
         public VectorDbType DbType { get; set; } = VectorDbType.BuiltIn;
 

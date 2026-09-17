@@ -332,12 +332,27 @@ namespace C99.Services
                 }
                 else if (path.Equals("/gateway/health", StringComparison.OrdinalIgnoreCase))
                 {
-                    await WriteJsonAsync(response, new
+                    var routingMode = _config.GatewayConfig.RoutingMode;
+                    var healthInfo = new Dictionary<string, object>
                     {
-                        status = "ok",
-                        gateway = true,
-                        upstream = _gateway.ResolveUpstreamChatUrl()
-                    });
+                        ["status"] = "ok",
+                        ["gateway"] = true,
+                        ["routing_mode"] = routingMode.ToString(),
+                    };
+
+                    if (routingMode == GatewayRoutingMode.OneToOne)
+                    {
+                        healthInfo["upstream"] = _gateway.ResolveUpstreamChatUrl();
+                        healthInfo["model"] = _gateway.GetExpectedModelId();
+                        healthInfo["strict_check"] = _config.GatewayConfig.StrictModelCheck;
+                    }
+                    else
+                    {
+                        healthInfo["exposed_model"] = _config.GatewayConfig.OneToManyModelName;
+                        healthInfo["endpoints_count"] = _config.GatewayConfig.OneToManyEndpoints.Count(e => e.Enabled);
+                    }
+
+                    await WriteJsonAsync(response, healthInfo);
                 }
                 else if (path.StartsWith("/gateway/v1/", StringComparison.OrdinalIgnoreCase))
                 {

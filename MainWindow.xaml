@@ -356,7 +356,40 @@
                                             FontSize="12" Height="32" Click="OnGatewayCopyClick"/>
                                 </Grid>
 
-                                <TextBlock Text="上游路径后缀（留空 = 跟随「AI 模型配置」；基地址自动跟随配置）" FontSize="13" Margin="0,0,0,4"/>
+                                <TextBlock Text="路由模式" FontSize="13" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="GatewayRoutingModeCombo" Height="32" FontSize="13"
+                                          SelectionChanged="OnGatewayRoutingModeChanged" Margin="0,0,0,8">
+                                    <ComboBoxItem Content="一对一模式（严格匹配模型ID）" Tag="OneToOne"/>
+                                    <ComboBoxItem Content="一对多模式（暴露固定模型名，自动选择可用端点）" Tag="OneToMany"/>
+                                </ComboBox>
+
+                                <!-- 一对一模式配置 -->
+                                <StackPanel x:Name="GatewayOneToOnePanel">
+                                    <CheckBox x:Name="GatewayStrictCheckBox" Content="严格检查请求的模型ID（不匹配则返回错误）"
+                                              FontSize="13" Checked="OnGatewayConfigChanged" Unchecked="OnGatewayConfigChanged" Margin="0,0,0,8"/>
+                                </StackPanel>
+
+                                <!-- 一对多模式配置 -->
+                                <StackPanel x:Name="GatewayOneToManyPanel" Visibility="Collapsed">
+                                    <TextBlock Text="对外暴露的模型名称" FontSize="13" Margin="0,0,0,4"/>
+                                    <TextBox x:Name="GatewayOneToManyModelNameBox" Height="32" FontSize="13"
+                                             PlaceholderText="gateway-model" TextChanged="OnGatewayOneToManyModelNameChanged" Margin="0,0,0,8"/>
+
+                                    <Grid Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="可用模型列表（勾选启用）" FontSize="13" VerticalAlignment="Center"/>
+                                        <Button Grid.Column="1" Content="刷新" FontSize="12" Height="28"
+                                                Click="OnGatewayRefreshModelsClick"/>
+                                    </Grid>
+                                    <ScrollViewer Height="220" VerticalScrollBarVisibility="Auto" Margin="0,0,0,8">
+                                        <StackPanel x:Name="GatewayModelsListPanel"/>
+                                    </ScrollViewer>
+                                </StackPanel>
+
+                                <TextBlock Text="上游路径后缀（留空 = 跟随「AI 模型配置」；基地址自动跟随配置）" FontSize="13" Margin="0,8,0,4"/>
                                 <TextBox x:Name="GatewayUpstreamBox" Height="32" FontSize="13"
                                          PlaceholderText="例如 /v1/chat/completions 或 /api/v1/chat/completions"
                                          TextChanged="OnGatewayUpstreamChanged" Margin="0,0,0,8"/>
@@ -551,6 +584,8 @@
                                                         <ColumnDefinition Width="Auto"/>
                                                         <ColumnDefinition Width="Auto"/>
                                                         <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" Text="本地端口" FontSize="13" VerticalAlignment="Center"/>
                                                     <TextBox x:Name="KbLocalEmbeddingPort" Grid.Column="1" Width="100" Height="32"
@@ -561,6 +596,9 @@
                                                     <TextBlock Grid.Column="4" Text="向量维度" FontSize="13" VerticalAlignment="Center" Margin="12,0,0,0"/>
                                                     <TextBox x:Name="KbDimension" Grid.Column="5" Width="90" Height="32"
                                                              FontSize="13" Text="1536" HorizontalAlignment="Left"/>
+                                                    <TextBlock Grid.Column="6" Text="模型重启(分)" FontSize="13" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                                    <TextBox x:Name="KbRestartModelMinutes" Grid.Column="7" Width="70" Height="32"
+                                                             FontSize="13" Text="0" HorizontalAlignment="Left" ToolTipService.ToolTip="向量化过程中每隔 N 分钟自动重启一次向量模型；0 表示不重启，最多 30 分钟"/>
                                                 </Grid>
                                             </StackPanel>
 
@@ -706,19 +744,36 @@
 <Button Grid.Column="5" x:Name="KbAddDirectoryBtn" Content="📁 添加目录" FontSize="12" Height="34"
                                                           Margin="12,0,0,0" Click="OnKbAddDirectory"/>
                                             </Grid>
+<Grid ColumnSpacing="8" Margin="0,6,0,10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="常规选项" FontSize="13" VerticalAlignment="Center"/>
+                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                                        <CheckBox x:Name="KbSkipExtEnable" Content="禁止扫描此类文件" FontSize="13"
+                                                                  Checked="OnKbSkipExtEnableChanged" Unchecked="OnKbSkipExtEnableChanged"/>
+                                                        <TextBox x:Name="KbSkipExtList" Width="280" Height="32" FontSize="13"
+                                                                 IsEnabled="False" PlaceholderText="如：.exe,.dll,.db（逗号分隔）"/>
+                                                    </StackPanel>
+                                                </Grid>
 <Grid ColumnSpacing="8" Margin="0,0,0,10">
-                                                 <Grid.ColumnDefinitions>
-                                                     <ColumnDefinition Width="*"/>
-                                                     <ColumnDefinition Width="Auto"/>
-                                                     <ColumnDefinition Width="Auto"/>
-                                                 </Grid.ColumnDefinitions>
-                                                 <ProgressBar Grid.Column="0" x:Name="KbAddDirectoryProgress" Height="12" Minimum="0" Maximum="1"
-                                                             VerticalAlignment="Center" Visibility="Collapsed"/>
-                                                 <Button Grid.Column="1" x:Name="KbSkipFileBtn" Content="⏭ 跳过当前文件"
-                                                         FontSize="12" Height="30" Click="OnKbSkipCurrentFile" Visibility="Collapsed"/>
-<local:BusyCursorButton Grid.Column="2" x:Name="KbCancelScanBtn" Content="✕ 取消"
+                                                   <Grid.ColumnDefinitions>
+                                                       <ColumnDefinition Width="*"/>
+                                                       <ColumnDefinition Width="Auto"/>
+                                                       <ColumnDefinition Width="Auto"/>
+                                                       <ColumnDefinition Width="Auto"/>
+                                                   </Grid.ColumnDefinitions>
+                                                   <ProgressBar Grid.Column="0" x:Name="KbAddDirectoryProgress" Height="12" Minimum="0" Maximum="1"
+                                                               VerticalAlignment="Center" Visibility="Collapsed"/>
+                                                  <Button Grid.Column="1" x:Name="KbSkipFileBtn" Content="⏭ 跳过当前文件"
+                                                          FontSize="12" Height="30" Click="OnKbSkipCurrentFile" Visibility="Collapsed"/>
+                                                  <Button Grid.Column="2" x:Name="KbPauseScanBtn" Content="⏸ 暂停"
+                                                          FontSize="12" Height="30" Margin="0,0,0,0" Click="OnKbPauseScan" Visibility="Collapsed"/>
+<local:BusyCursorButton Grid.Column="3" x:Name="KbCancelScanBtn" Content="✕ 取消"
                                                           FontSize="12" Height="30" Click="OnKbCancelScan" Visibility="Collapsed"/>
-                                             </Grid>
+                                              </Grid>
 
 <Grid Margin="0,4,0,8">
                                                    <Grid.ColumnDefinitions>
@@ -990,8 +1045,48 @@
                 </StackPanel>
 
                 <!-- 关于 -->
-                <StackPanel x:Name="AboutContent" Visibility="Collapsed">
-                    <TextBlock Text="关于页面 ℹ️" FontSize="24"/>
+                <StackPanel x:Name="AboutContent" Visibility="Collapsed" Spacing="8">
+                    <TextBlock Text="关于页面 ℹ️" FontSize="24" Margin="0,0,0,8"/>
+
+                    <Border BorderBrush="#44888888" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,8">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="👤 作者" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="中文名" FontSize="13" Foreground="Gray" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="周毅豪" FontSize="14"/>
+                            </Grid>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="英文名" FontSize="13" Foreground="Gray" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="Cody Chau" FontSize="14"/>
+                            </Grid>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="邮箱" FontSize="13" Foreground="Gray" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="admin@nacgame.com" FontSize="14"/>
+                            </Grid>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="GitHub" FontSize="13" Foreground="Gray" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" FontSize="14">
+                                    <Hyperlink NavigateUri="https://github.com/codychau/c99" Click="OnAboutGithubClick">github.com/codychau/c99</Hyperlink>
+                                </TextBlock>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <!-- AI底座启动集合 -->
@@ -1028,8 +1123,6 @@
                     <TextBlock Text="选择推理引擎" FontSize="18" Margin="0,0,0,8"/>
                     <ComboBox x:Name="EngineSelector" Margin="0,0,0,20" Height="40" FontSize="14" SelectionChanged="OnEngineChanged">
                         <ComboBoxItem Content="llama.cpp" IsSelected="True"/>
-                        <ComboBoxItem Content="vllm"/>
-                        <ComboBoxItem Content="lmstudio"/>
                         <ComboBoxItem Content="ollama"/>
                     </ComboBox>
 
@@ -1074,6 +1167,15 @@
                                     <CheckBox x:Name="LLamaAllLayersGPU" Content="全部层进 GPU（-ngl -1，推荐，需显存装得下模型+KV）" FontSize="13" Margin="0,0,0,2"
                                               Checked="OnLLamaAllLayersGPUChanged" Unchecked="OnLLamaAllLayersGPUChanged"/>
                                     <TextBlock Text="勾选后忽略上方滑杆直接传 -ngl -1；若显存不足（日志报 hipMalloc / VRAM 不够），取消勾选改回部分层或减小上下文。" FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                                    <!-- MoE 专家 CPU 卸载 -->
+                                    <TextBlock Text="MoE 专家卸载到 CPU 的层数 (--n-cpu-moe，默认 0=全部专家进 GPU)" FontSize="13" Margin="0,0,0,4"/>
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="80"/></Grid.ColumnDefinitions>
+                                        <Slider x:Name="LLamaNCpuMoe" Grid.Column="0" Minimum="0" Maximum="64" Value="0" StepFrequency="1" ValueChanged="OnLLamaValueChanged" Margin="0,0,12,0"/>
+                                        <TextBox Grid.Column="1" x:Name="LLamaNCpuMoeText" Text="0" FontSize="13" TextChanged="OnLLamaNCpuMoeTextChanged"/>
+                                    </Grid>
+                                    <TextBlock Text="MoE 模型权重塞不满显存时，把部分专家层放内存（如 Mellum2 12B 设 6）。配合 -ngl 99 效果最佳。" FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,10"/>
 
                                     <!-- 上下文长度 -c -->
                                     <TextBlock Text="上下文长度 (-c, --ctx-size)" FontSize="13" Margin="0,0,0,4"/>
@@ -1129,51 +1231,65 @@
                                     <!-- mlock 复选框 -->
                                     <CheckBox x:Name="LLamaMLock" Content="--mlock 锁定内存（防止交换/压缩，需管理员权限）" FontSize="13" Margin="0,0,0,8" IsChecked="True"/>
 
-                                    <!-- mmap -->
-                                    <TextBlock Text="--mmap 内存映射（默认启用，禁用可减少页面溢出）" FontSize="13" Margin="0,0,0,4"/>
-                                    <ComboBox x:Name="LLamaMMap" Margin="0,0,0,10" Height="34" FontSize="13">
-                                        <ComboBoxItem Content="启用（默认）" IsSelected="True"/>
-                                        <ComboBoxItem Content="禁用 (--no-mmap)"/>
-                                    </ComboBox>
-
-                                    <!-- Flash Attention -->
-                                    <TextBlock Text="Flash Attention (-fa, --flash-attn)" FontSize="13" Margin="0,0,0,4"/>
-                                    <ComboBox x:Name="LLamaFlashAttn" Margin="0,0,0,10" Height="34" FontSize="13">
-                                        <ComboBoxItem Content="auto（默认）" IsSelected="True"/>
-                                        <ComboBoxItem Content="on"/>
-                                        <ComboBoxItem Content="off"/>
-                                    </ComboBox>
-
-                                    <!-- NUMA -->
-                                    <TextBlock Text="NUMA 优化 (--numa)" FontSize="13" Margin="0,0,0,4"/>
-                                    <ComboBox x:Name="LLamaNuma" Margin="0,0,0,10" Height="34" FontSize="13">
-                                        <ComboBoxItem Content="禁用（默认）" IsSelected="True"/>
-                                        <ComboBoxItem Content="distribute"/>
-                                        <ComboBoxItem Content="isolate"/>
-                                        <ComboBoxItem Content="numactl"/>
-                                    </ComboBox>
-
-                                    <!-- 缓存类型 K -->
-                                    <TextBlock Text="KV 缓存类型 K (-ctk, --cache-type-k, 默认: f16)" FontSize="13" Margin="0,0,0,4"/>
-                                    <ComboBox x:Name="LLamaCacheTypeK" Margin="0,0,0,10" Height="34" FontSize="13">
-                                        <ComboBoxItem Content="f16（默认）" IsSelected="True"/>
-                                        <ComboBoxItem Content="f32"/>
-                                        <ComboBoxItem Content="bf16"/>
-                                        <ComboBoxItem Content="q8_0"/>
-                                        <ComboBoxItem Content="q4_0"/>
-                                        <ComboBoxItem Content="q4_1"/>
-                                    </ComboBox>
-
-                                    <!-- 缓存类型 V -->
-                                    <TextBlock Text="KV 缓存类型 V (-ctv, --cache-type-v, 默认: f16)" FontSize="13" Margin="0,0,0,4"/>
-                                    <ComboBox x:Name="LLamaCacheTypeV" Margin="0,0,0,10" Height="34" FontSize="13">
-                                        <ComboBoxItem Content="f16（默认）" IsSelected="True"/>
-                                        <ComboBoxItem Content="f32"/>
-                                        <ComboBoxItem Content="bf16"/>
-                                        <ComboBoxItem Content="q8_0"/>
-                                        <ComboBoxItem Content="q4_0"/>
-                                        <ComboBoxItem Content="q4_1"/>
-                                    </ComboBox>
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="12"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="12"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="12"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="12"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="--mmap 内存映射" FontSize="12" Margin="0,0,0,4"/>
+                                            <ComboBox x:Name="LLamaMMap" Height="34" FontSize="13">
+                                                <ComboBoxItem Content="启用（默认）" IsSelected="True"/>
+                                                <ComboBoxItem Content="禁用 (--no-mmap)"/>
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="Flash Attention" FontSize="12" Margin="0,0,0,4"/>
+                                            <ComboBox x:Name="LLamaFlashAttn" Height="34" FontSize="13">
+                                                <ComboBoxItem Content="auto（默认）" IsSelected="True"/>
+                                                <ComboBoxItem Content="on"/>
+                                                <ComboBoxItem Content="off"/>
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="4">
+                                            <TextBlock Text="NUMA 优化" FontSize="12" Margin="0,0,0,4"/>
+                                            <ComboBox x:Name="LLamaNuma" Height="34" FontSize="13">
+                                                <ComboBoxItem Content="禁用（默认）" IsSelected="True"/>
+                                                <ComboBoxItem Content="distribute"/>
+                                                <ComboBoxItem Content="isolate"/>
+                                                <ComboBoxItem Content="numactl"/>
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="6">
+                                            <TextBlock Text="KV 缓存 K (-ctk)" FontSize="12" Margin="0,0,0,4"/>
+                                            <ComboBox x:Name="LLamaCacheTypeK" Height="34" FontSize="13">
+                                                <ComboBoxItem Content="f16（默认）" IsSelected="True"/>
+                                                <ComboBoxItem Content="f32"/>
+                                                <ComboBoxItem Content="bf16"/>
+                                                <ComboBoxItem Content="q8_0"/>
+                                                <ComboBoxItem Content="q4_0"/>
+                                                <ComboBoxItem Content="q4_1"/>
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="8">
+                                            <TextBlock Text="KV 缓存 V (-ctv)" FontSize="12" Margin="0,0,0,4"/>
+                                            <ComboBox x:Name="LLamaCacheTypeV" Height="34" FontSize="13">
+                                                <ComboBoxItem Content="f16（默认）" IsSelected="True"/>
+                                                <ComboBoxItem Content="f32"/>
+                                                <ComboBoxItem Content="bf16"/>
+                                                <ComboBoxItem Content="q8_0"/>
+                                                <ComboBoxItem Content="q4_0"/>
+                                                <ComboBoxItem Content="q4_1"/>
+                                            </ComboBox>
+                                        </StackPanel>
+                                    </Grid>
 
                                     <!-- ========== GPU 与设备 ========== -->
                                     <TextBlock Text="── GPU 与设备 ──" FontSize="14" FontWeight="SemiBold" Foreground="#888" Margin="0,8,0,8"/>
@@ -1215,50 +1331,87 @@
                                     <!-- ========== 采样参数 ========== -->
                                     <TextBlock Text="── 采样参数 ──" FontSize="14" FontWeight="SemiBold" Foreground="#888" Margin="0,8,0,8"/>
 
-                                    <!-- 温度 -->
-                                    <TextBlock Text="温度 (--temp, --temperature, 默认: 0.80)" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBox x:Name="LLamaTemperature" Text="0.80" PlaceholderText="0.80" FontSize="13" Height="34" Margin="0,0,0,10"/>
-
-                                    <!-- Top-K -->
-                                    <TextBlock Text="Top-K (--top-k, 默认: 40, 0=禁用)" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBox x:Name="LLamaTopK" Text="40" PlaceholderText="40" FontSize="13" Height="34" Margin="0,0,0,10"/>
-
-                                    <!-- Top-P -->
-                                    <TextBlock Text="Top-P (--top-p, 默认: 0.95, 1.0=禁用)" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBox x:Name="LLamaTopP" Text="0.95" PlaceholderText="0.95" FontSize="13" Height="34" Margin="0,0,0,10"/>
-
-                                    <!-- Min-P -->
-                                    <TextBlock Text="Min-P (--min-p, 默认: 0.05, 0.0=禁用)" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBox x:Name="LLamaMinP" Text="0.05" PlaceholderText="0.05" FontSize="13" Height="34" Margin="0,0,0,10"/>
-
-                                    <!-- 重复惩罚 -->
-                                    <TextBlock Text="重复惩罚 (--repeat-penalty, 默认: 1.00, 1.0=禁用)" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBox x:Name="LLamaRepeatPenalty" Text="1.00" PlaceholderText="1.00" FontSize="13" Height="34" Margin="0,0,0,10"/>
-
-                                    <!-- Presence 惩罚 -->
-                                    <TextBlock Text="存在惩罚 (--presence-penalty, 默认: 0.00)" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBox x:Name="LLamaPresencePenalty" Text="0.00" PlaceholderText="0.00" FontSize="13" Height="34" Margin="0,0,0,10"/>
-
-                                    <!-- Frequency 惩罚 -->
-                                    <TextBlock Text="频率惩罚 (--frequency-penalty, 默认: 0.00)" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBox x:Name="LLamaFrequencyPenalty" Text="0.00" PlaceholderText="0.00" FontSize="13" Height="34" Margin="0,0,0,10"/>
-
-                                    <!-- Mirostat -->
-                                    <TextBlock Text="Mirostat (--mirostat, 默认: 0=禁用)" FontSize="13" Margin="0,0,0,4"/>
-                                    <ComboBox x:Name="LLamaMirostat" Margin="0,0,0,6" Height="34" FontSize="13">
-                                        <ComboBoxItem Content="0 = 禁用（默认）" IsSelected="True"/>
-                                        <ComboBoxItem Content="1 = Mirostat"/>
-                                        <ComboBoxItem Content="2 = Mirostat 2.0"/>
-                                    </ComboBox>
                                     <Grid Margin="0,0,0,10">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                        <TextBox x:Name="LLamaMirostatLR" Grid.Column="0" PlaceholderText="学习率 (默认: 0.10)" FontSize="13" Height="34" Margin="0,0,4,0"/>
-                                        <TextBox x:Name="LLamaMirostatEnt" Grid.Column="1" PlaceholderText="目标熵 (默认: 5.00)" FontSize="13" Height="34" Margin="4,0,0,0"/>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="温度 (--temp, 默认: 0.80)" FontSize="12" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="LLamaTemperature" Text="0.80" PlaceholderText="0.80" FontSize="13" Height="34"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="Top-K (默认: 40, 0=禁用)" FontSize="12" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="LLamaTopK" Text="40" PlaceholderText="40" FontSize="13" Height="34"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="4">
+                                            <TextBlock Text="Top-P (默认: 0.95, 1.0=禁用)" FontSize="12" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="LLamaTopP" Text="0.95" PlaceholderText="0.95" FontSize="13" Height="34"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="6">
+                                            <TextBlock Text="Min-P (默认: 0.05, 0.0=禁用)" FontSize="12" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="LLamaMinP" Text="0.05" PlaceholderText="0.05" FontSize="13" Height="34"/>
+                                        </StackPanel>
                                     </Grid>
 
-                                    <!-- 随机种子 -->
-                                    <TextBlock Text="随机种子 (-s, --seed, -1=随机)" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBox x:Name="LLamaSeed" Text="-1" PlaceholderText="-1" FontSize="13" Height="34" Margin="0,0,0,10"/>
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="重复惩罚 (默认: 1.00)" FontSize="12" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="LLamaRepeatPenalty" Text="1.00" PlaceholderText="1.00" FontSize="13" Height="34"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="存在惩罚 (默认: 0.00)" FontSize="12" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="LLamaPresencePenalty" Text="0.00" PlaceholderText="0.00" FontSize="13" Height="34"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="4">
+                                            <TextBlock Text="频率惩罚 (默认: 0.00)" FontSize="12" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="LLamaFrequencyPenalty" Text="0.00" PlaceholderText="0.00" FontSize="13" Height="34"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="6">
+                                            <TextBlock Text="随机种子 (-1=随机)" FontSize="12" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="LLamaSeed" Text="-1" PlaceholderText="-1" FontSize="13" Height="34"/>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="Mirostat (默认: 0=禁用)" FontSize="12" Margin="0,0,0,4"/>
+                                            <ComboBox x:Name="LLamaMirostat" Height="34" FontSize="13">
+                                                <ComboBoxItem Content="0 = 禁用（默认）" IsSelected="True"/>
+                                                <ComboBoxItem Content="1 = Mirostat"/>
+                                                <ComboBoxItem Content="2 = Mirostat 2.0"/>
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="Mirostat 学习率 (默认: 0.10)" FontSize="12" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="LLamaMirostatLR" PlaceholderText="0.10" FontSize="13" Height="34"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="4">
+                                            <TextBlock Text="Mirostat 目标熵 (默认: 5.00)" FontSize="12" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="LLamaMirostatEnt" PlaceholderText="5.00" FontSize="13" Height="34"/>
+                                        </StackPanel>
+                                    </Grid>
 
                                     <!-- 推测解码 -->
                                     <TextBlock Text="── 推测解码 ──" FontSize="14" FontWeight="SemiBold" Foreground="#888" Margin="0,8,0,8"/>
@@ -1289,6 +1442,8 @@
                                         <TextBlock Grid.Column="3" Text="端口" VerticalAlignment="Center" FontSize="12"/>
                                         <TextBox Grid.Column="4" x:Name="LLamaPort" Text="8080" FontSize="13" Height="32"/>
                                     </Grid>
+                                    <TextBlock Text="模型别名 (--alias，逗号分隔，供 API 显示短名)" FontSize="13" Margin="0,0,0,4"/>
+                                    <TextBox x:Name="LLamaAlias" PlaceholderText="例如：Mellum2,a2.5b（留空则用 GGUF 文件名）" FontSize="13" Height="32" Margin="0,0,0,8"/>
                                     <TextBlock FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,8">
                                         <Run Text="💡 想让外部 Agent（dify / openclaw 等）的调用也计入首页费用？把 Agent 的目标地址改为 "/>
                                         <Run Text="http://127.0.0.1:9527/gateway/v1/chat/completions" FontFamily="Consolas"/>
@@ -1299,114 +1454,6 @@
                                     <TextBlock Text="── 额外参数 ──" FontSize="14" FontWeight="SemiBold" Foreground="#888" Margin="0,8,0,8"/>
                                     <TextBlock Text="以上没有覆盖到的参数，直接在这里写，会自动追加到命令行" FontSize="11" Foreground="Gray" Margin="0,0,0,4"/>
                                     <TextBox x:Name="LLamaExtraArgs" PlaceholderText="例如：--cont-batching --no-warmup --chat-template chatml" FontSize="13" Height="60" TextWrapping="Wrap" AcceptsReturn="False"/>
-                                </StackPanel>
-
-                                <!-- vllm 参数 -->
-                                <StackPanel x:Name="VLLMParams" Visibility="Collapsed">
-                                    <TextBlock Text="vLLM 参数配置" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12"/>
-                                    
-                                    <!-- 启动器工作目录 -->
-                                    <TextBlock Text="启动器工作目录" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBlock Text="设置 Python / vllm 入口所在目录" FontSize="11" Foreground="Gray" Margin="0,0,0,6"/>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBox x:Name="VLLMLauncherDir" Grid.Column="0" PlaceholderText="例如：D:\miniconda3\envs\vllm\Scripts" FontSize="13" Height="36" Margin="0,0,8,0"/>
-                                        <Button Grid.Column="1" Content="浏览..." FontSize="12" Height="36" Click="OnBrowseVLLMLauncherDir"/>
-                                    </Grid>
-
-                                    <TextBlock Text="张量并行数 (--tensor-parallel-size)" FontSize="13" Margin="0,0,0,4"/>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="80"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Slider x:Name="VLLMTensorParallel" Grid.Column="0" Minimum="1" Maximum="8" Value="1" ValueChanged="OnVLLMValueChanged" Margin="0,0,12,0"/>
-                                        <TextBox Grid.Column="1" x:Name="VLLMTensorParallelText" Text="1" FontSize="13" TextChanged="OnVLLMTensorParallelTextChanged"/>
-                                    </Grid>
-
-                                    <TextBlock Text="上下文长度 (--max-model-len)" FontSize="13" Margin="0,0,0,4"/>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="80"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Slider x:Name="VLLMMaxLen" Grid.Column="0" Minimum="2048" Maximum="65536" Value="4096" StepFrequency="1024" ValueChanged="OnVLLMValueChanged" Margin="0,0,12,0"/>
-                                        <TextBox Grid.Column="1" x:Name="VLLMMaxLenText" Text="4096" FontSize="13" TextChanged="OnVLLMMaxLenTextChanged"/>
-                                    </Grid>
-
-                                    <TextBlock Text="批处理大小 (--max-batch-size)" FontSize="13" Margin="0,0,0,4"/>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="80"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Slider x:Name="VLLMBatchSize" Grid.Column="0" Minimum="1" Maximum="512" Value="32" ValueChanged="OnVLLMValueChanged" Margin="0,0,12,0"/>
-                                        <TextBox Grid.Column="1" x:Name="VLLMBatchSizeText" Text="32" FontSize="13" TextChanged="OnVLLMBatchSizeTextChanged"/>
-                                    </Grid>
-
-                                    <TextBlock Text="量化方式 (--quantization)" FontSize="13" Margin="0,0,0,4"/>
-                                    <ComboBox x:Name="VLLMQuantization" Margin="0,0,0,12" Height="36" FontSize="13" SelectionChanged="OnVLLMSelectionChanged">
-                                        <ComboBoxItem Content="none" IsSelected="True"/>
-                                        <ComboBoxItem Content="awq"/>
-                                        <ComboBoxItem Content="bitsandbytes"/>
-                                        <ComboBoxItem Content="gptq"/>
-                                    </ComboBox>
-
-                                    <TextBlock Text="额外参数" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBox x:Name="VLLMExtraArgs" PlaceholderText="可选的额外命令行参数" FontSize="13" Height="60" TextWrapping="Wrap"/>
-                                </StackPanel>
-
-                                <!-- lmstudio 参数 -->
-                                <StackPanel x:Name="LMStudioParams" Visibility="Collapsed">
-                                    <TextBlock Text="LM Studio 参数配置" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12"/>
-                                    
-                                    <!-- 启动器工作目录 -->
-                                    <TextBlock Text="启动器工作目录" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBlock Text="设置后程序自动在此目录下查找 LM Studio.exe" FontSize="11" Foreground="Gray" Margin="0,0,0,6"/>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBox x:Name="LMStudioLauncherDir" Grid.Column="0" PlaceholderText="例如：C:\Program Files\LM Studio" FontSize="13" Height="36" Margin="0,0,8,0"/>
-                                        <Button Grid.Column="1" Content="浏览..." FontSize="12" Height="36" Click="OnBrowseLMStudioLauncherDir"/>
-                                    </Grid>
-
-                                    <TextBlock Text="GPU 层数 (-ngl)" FontSize="13" Margin="0,0,0,4"/>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="80"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Slider x:Name="LMStudioGPULayers" Grid.Column="0" Minimum="0" Maximum="100" Value="35" ValueChanged="OnLMStudioValueChanged" Margin="0,0,12,0"/>
-                                        <TextBox Grid.Column="1" x:Name="LMStudioGPULayersText" Text="35" FontSize="13" TextChanged="OnLMStudioGPULayersTextChanged"/>
-                                    </Grid>
-
-                                    <TextBlock Text="上下文长度 (-ctx-size)" FontSize="13" Margin="0,0,0,4"/>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="80"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Slider x:Name="LMStudioContextSize" Grid.Column="0" Minimum="512" Maximum="32768" Value="4096" StepFrequency="512" ValueChanged="OnLMStudioValueChanged" Margin="0,0,12,0"/>
-                                        <TextBox Grid.Column="1" x:Name="LMStudioContextSizeText" Text="4096" FontSize="13" TextChanged="OnLMStudioContextSizeTextChanged"/>
-                                    </Grid>
-
-                                    <TextBlock Text="线程数 (-t)" FontSize="13" Margin="0,0,0,4"/>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="80"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Slider x:Name="LMStudioThreads" Grid.Column="0" Minimum="1" Maximum="64" Value="8" ValueChanged="OnLMStudioValueChanged" Margin="0,0,12,0"/>
-                                        <TextBox Grid.Column="1" x:Name="LMStudioThreadsText" Text="8" FontSize="13" TextChanged="OnLMStudioThreadsTextChanged"/>
-                                    </Grid>
-
-                                    <TextBlock Text="额外参数" FontSize="13" Margin="0,0,0,4"/>
-                                    <TextBox x:Name="LMStudioExtraArgs" PlaceholderText="可选的额外命令行参数" FontSize="13" Height="60" TextWrapping="Wrap"/>
                                 </StackPanel>
 
                                 <!-- ollama 参数 -->

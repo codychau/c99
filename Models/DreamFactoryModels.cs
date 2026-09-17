@@ -26,6 +26,38 @@ namespace C99.Models
         Gateway = 2,
     }
 
+    /// <summary>网关路由模式：一对一 / 一对多</summary>
+    public enum GatewayRoutingMode
+    {
+        /// <summary>一对一：请求的 model ID 必须匹配配置的模型（严格检查）</summary>
+        OneToOne = 0,
+
+        /// <summary>一对多：/models 暴露固定模型名，自动选择可用的上游模型</summary>
+        OneToMany = 1,
+    }
+
+    /// <summary>一对多模式下的模型端点配置</summary>
+    public class GatewayModelEndpoint
+    {
+        /// <summary>端点名称（用于日志和 UI 显示）</summary>
+        public string Name { get; set; } = "";
+
+        /// <summary>API 地址（OpenAI 兼容，如 http://localhost:8080/v1/chat/completions）</summary>
+        public string ApiUrl { get; set; } = "";
+
+        /// <summary>API Key（可选，本地模型通常不需要）</summary>
+        public string ApiKey { get; set; } = "";
+
+        /// <summary>实际模型名称（发送给上游的 model 字段值）</summary>
+        public string ModelName { get; set; } = "";
+
+        /// <summary>是否启用</summary>
+        public bool Enabled { get; set; } = true;
+
+        /// <summary>优先级（数字越小优先级越高，用于一对多模式选择顺序）</summary>
+        public int Priority { get; set; } = 0;
+    }
+
     /// <summary>
     /// 模型网关配置（挂在梦工厂 9527 HTTP 服务的 /gateway 前缀下）
     /// </summary>
@@ -34,11 +66,23 @@ namespace C99.Models
         /// <summary>旧版「上游完整基地址」字段，已废弃，仅用于读取旧配置并一次性迁移为 UpstreamPath</summary>
         public string UpstreamUrl { get; set; } = "";
 
-        /// <summary>上游路径后缀：网关把 chat 请求转发到「AI 模型配置」基地址 + 该后缀（如 /v1/chat/completions）。留空 = 完全跟随生效地址</summary>
+        /// <summary>上游路径后缀：网关把 chat 请求转发到「AI 模型配置」基地址 + 那后缀（如 /v1/chat/completions）。留空 = 完全跟随生效地址</summary>
         public string UpstreamPath { get; set; } = "";
 
         /// <summary>是否已展示过「模型网关」工作流的欢迎说明</summary>
         public bool HintShown { get; set; }
+
+        /// <summary>网关路由模式：一对一（严格匹配）/ 一对多（自动选择可用模型）</summary>
+        public GatewayRoutingMode RoutingMode { get; set; } = GatewayRoutingMode.OneToOne;
+
+        /// <summary>一对多模式下对外暴露的固定模型名称</summary>
+        public string OneToManyModelName { get; set; } = "gateway-model";
+
+        /// <summary>一对多模式下的模型端点列表</summary>
+        public List<GatewayModelEndpoint> OneToManyEndpoints { get; set; } = new();
+
+        /// <summary>一对一模式下是否严格检查请求的 model ID（不匹配则返回错误）</summary>
+        public bool StrictModelCheck { get; set; } = true;
     }
 
     /// <summary>AI 底座计费模式</summary>

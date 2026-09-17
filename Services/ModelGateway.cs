@@ -1,6 +1,8 @@
 using C99.Models;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -19,6 +21,7 @@ namespace C99.Services
     {
         private readonly DreamFactoryConfig _config;
         private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(300) };
+        private readonly HttpClient _pingHttp = new() { Timeout = TimeSpan.FromSeconds(5) };
 
         public ModelGateway(DreamFactoryConfig config)
         {
@@ -32,6 +35,117 @@ namespace C99.Services
             if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
                 return new UriBuilder(uri) { Path = "", Query = "", Fragment = "" }.Uri.ToString().TrimEnd('/');
             return url;
+        }
+
+        /// <summary>从请求体中提取 model 字段值</summary>
+        internal static string ExtractModelId(string body)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("model", out var model))
+                    return model.GetString() ?? "";
+            }
+            catch { }
+            return "";
+        }
+
+        /// <summary>获取配置的期望模型 ID（一对一模式）</summary>
+        public string GetExpectedModelId()
+        {
+            return _config.GetEffectiveModelName();
+        }
+
+        /// <summary>一对一模式下检查请求的 model ID 是否匹配配置</summary>
+        public bool ValidateModelId(string requestedModel, out string? errorMessage)
+        {
+            errorMessage = null;
+            if (!_config.GatewayConfig.StrictModelCheck)
+                return true;
+
+            string expected = GetExpectedModelId();
+            if (string.IsNullOrEmpty(expected))
+                return true;
+
+            if (!string.Equals(requestedModel, expected, StringComparison.Ordinal))
+            {
+                errorMessage = $"模型 ID 不匹配: 请求的是 '{requestedModel}'，但网关配置的是 '{expected}'。请检查请求中的 model 字段。";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>一对多模式下：按优先级排序获取启用的端点列表</summary>
+        public IEnumerable<GatewayModelEndpoint> GetSortedEndpoints()
+        {
+            return _config.GatewayConfig.OneToManyEndpoints
+                .Where(e => e.Enabled)
+                .OrderBy(e => e.Priority)
+                .ThenBy(e => e.Name);
+        }
+
+        /// <summary>一对多模式下：ping 检测端点是否可用</summary>
+        public async Task<bool> PingEndpointAsync(GatewayModelEndpoint endpoint)
+        {
+            try
+            {
+                string baseUrl = DreamFactoryConfig.NormalizeConnectableUrl(endpoint.ApiUrl);
+                if (baseUrl.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+                    baseUrl = baseUrl[..baseUrl.LastIndexOf("/chat/completions", StringComparison.OrdinalIgnoreCase)].TrimEnd('/');
+                else if (Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri))
+                    baseUrl = new UriBuilder(uri) { Path = "", Query = "", Fragment = "" }.Uri.ToString().TrimEnd('/');
+
+                string modelsUrl = baseUrl + "/models";
+                using var req = new HttpRequestMessage(HttpMethod.Get, modelsUrl);
+                if (!string.IsNullOrEmpty(endpoint.ApiKey))
+                    req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {endpoint.ApiKey}");
+
+                using var resp = await _pingHttp.SendAsync(req);
+                return resp.IsSuccessStatusCode;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>一对多模式下：找到第一个可用的端点</summary>
+        public async Task<GatewayModelEndpoint?> FindAvailableEndpointAsync(Action<string>? log)
+        {
+            var endpoints = GetSortedEndpoints().ToList();
+            if (endpoints.Count == 0)
+            {
+                log?.Invoke("一对多模式: 没有配置任何端点");
+                return null;
+            }
+
+            foreach (var ep in endpoints)
+            {
+                log?.Invoke($"一对多模式: 正在检测端点 '{ep.Name}'...");
+                if (await PingEndpointAsync(ep))
+                {
+                    log?.Invoke($"一对多模式: 端点 '{ep.Name}' 可用");
+                    return ep;
+                }
+                log?.Invoke($"一对多模式: 端点 '{ep.Name}' 不可用，尝试下一个");
+            }
+
+            log?.Invoke("一对多模式: 所有端点均不可用");
+            return null;
+        }
+
+        /// <summary>用指定端点重建请求体（替换 model 字段）</summary>
+        internal static string RebuildBodyWithModel(string body, string newModel)
+        {
+            if (string.IsNullOrEmpty(body)) return body;
+            try
+            {
+                var doc = JsonNode.Parse(body);
+                if (doc == null) return body;
+                doc["model"] = newModel;
+                return doc.ToJsonString(new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+            }
+            catch { return body; }
         }
 
         /// <summary>解析上游 chat 完整地址：基地址跟随「AI 模型配置」，路径后缀可自定义（留空 = 完全跟随生效地址）</summary>
@@ -84,8 +198,44 @@ namespace C99.Services
             bool stream = IsStreamRequest(body);
             int promptEstimate = EstimatePromptTokens(body);
 
-            string? auth = GetAuth(request);
-            using var upstreamReq = BuildForwardRequest("POST", ResolveUpstreamChatUrl(), body, auth);
+            string upstreamUrl;
+            string? auth;
+            string endpointName = "";
+
+            if (_config.GatewayConfig.RoutingMode == GatewayRoutingMode.OneToMany)
+            {
+                var endpoint = await FindAvailableEndpointAsync(log);
+                if (endpoint == null)
+                {
+                    response.StatusCode = 503;
+                    response.ContentType = "application/json; charset=utf-8";
+                    await WriteRawAsync(response,
+                        JsonSerializer.Serialize(new { error = "一对多模式: 没有可用的模型端点" }), 503, null);
+                    return;
+                }
+                endpointName = endpoint.Name;
+                upstreamUrl = ResolveEndpointChatUrl(endpoint);
+                auth = string.IsNullOrEmpty(endpoint.ApiKey) ? GetAuth(request) : $"Bearer {endpoint.ApiKey}";
+                body = RebuildBodyWithModel(body, endpoint.ModelName);
+                log?.Invoke($"一对多模式: 使用端点 '{endpoint.Name}'，模型 '{endpoint.ModelName}'");
+            }
+            else
+            {
+                string requestedModel = ExtractModelId(body);
+                if (!ValidateModelId(requestedModel, out string? errorMsg))
+                {
+                    log?.Invoke($"一对一模式: {errorMsg}");
+                    response.StatusCode = 400;
+                    response.ContentType = "application/json; charset=utf-8";
+                    await WriteRawAsync(response,
+                        JsonSerializer.Serialize(new { error = errorMsg }), 400, null);
+                    return;
+                }
+                upstreamUrl = ResolveUpstreamChatUrl();
+                auth = GetAuth(request);
+            }
+
+            using var upstreamReq = BuildForwardRequest("POST", upstreamUrl, body, auth);
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             try
@@ -108,7 +258,7 @@ namespace C99.Services
                 if (!upstreamResp.IsSuccessStatusCode)
                 {
                     var errBody = await upstreamResp.Content.ReadAsStringAsync();
-                    log?.Invoke($"网关转发失败: 上游返回 HTTP {status} {(errBody.Length > 200 ? errBody[..200] : errBody)}");
+                    log?.Invoke($"网关转发失败{(string.IsNullOrEmpty(endpointName) ? "" : $" [{endpointName}]")}: 上游返回 HTTP {status} {(errBody.Length > 200 ? errBody[..200] : errBody)}");
                     await WriteRawAsync(response, errBody, status, response.ContentType);
                     return;
                 }
@@ -162,13 +312,13 @@ namespace C99.Services
 
                 sw.Stop();
                 metrics?.RecordAICall(finalPrompt, finalCompletion, sw.Elapsed.TotalMilliseconds, 0, true);
-                log?.Invoke($"网关完成: prompt {finalPrompt} + completion {finalCompletion} tokens"
+                log?.Invoke($"网关完成{(string.IsNullOrEmpty(endpointName) ? "" : $" [{endpointName}]")}: prompt {finalPrompt} + completion {finalCompletion} tokens"
                     + (stream ? "（流式）" : "") + $"，耗时 {sw.Elapsed.TotalSeconds:F1}s");
             }
             catch (Exception ex)
             {
                 sw.Stop();
-                log?.Invoke($"网关请求异常: {ex.Message}");
+                log?.Invoke($"网关请求异常{(string.IsNullOrEmpty(endpointName) ? "" : $" [{endpointName}]")}: {ex.Message}");
                 try
                 {
                     response.StatusCode = 502;
@@ -180,9 +330,39 @@ namespace C99.Services
             }
         }
 
-        /// <summary>GET /gateway/v1/models：透传上游模型列表</summary>
+        /// <summary>解析指定端点的 chat 完整地址</summary>
+        private string ResolveEndpointChatUrl(GatewayModelEndpoint endpoint)
+        {
+            return DreamFactoryConfig.NormalizeConnectableUrl(endpoint.ApiUrl);
+        }
+
+        /// <summary>GET /gateway/v1/models：根据路由模式返回模型列表</summary>
         public async Task HandleModelsAsync(HttpListenerRequest request, HttpListenerResponse response, Action<string>? log)
         {
+            if (_config.GatewayConfig.RoutingMode == GatewayRoutingMode.OneToMany)
+            {
+                string modelName = _config.GatewayConfig.OneToManyModelName;
+                string modelsJson = JsonSerializer.Serialize(new
+                {
+                    @object = "list",
+                    data = new[]
+                    {
+                        new
+                        {
+                            id = modelName,
+                            @object = "model",
+                            created = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                            owned_by = "gateway",
+                            permission = Array.Empty<object>(),
+                            root = modelName,
+                            parent = (string?)null
+                        }
+                    }
+                });
+                await WriteRawAsync(response, modelsJson, 200, "application/json");
+                return;
+            }
+
             string? auth = GetAuth(request);
             using var upstreamReq = BuildForwardRequest("GET", ResolveUpstreamRoot() + "/models", "", auth);
             try

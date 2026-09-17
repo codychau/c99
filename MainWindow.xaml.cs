@@ -64,6 +64,7 @@ namespace C99
         private bool _kbInitialized;
         private bool _kbAddDirectoryBusy;
         private bool _kbCollectionBusy;
+        private bool _kbPausing;
         private CancellationTokenSource? _kbScanCts;
         private bool _kbCancelling;
         private CancellationTokenSource? _kbSkipFileCts;
@@ -212,6 +213,20 @@ namespace C99
         private void OnAIGeneralStoreClick(object sender, RoutedEventArgs e) => ShowAIGeneralStore();
         private void OnSettingsClick(object sender, RoutedEventArgs e) => ShowSettings();
         private void OnAboutClick(object sender, RoutedEventArgs e) => ShowAbout();
+
+        /// <summary>关于页面 GitHub 链接点击：尝试用默认浏览器打开项目地址</summary>
+        private void OnAboutGithubClick(Microsoft.UI.Xaml.Documents.Hyperlink sender, Microsoft.UI.Xaml.Documents.HyperlinkClickEventArgs args)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "https://github.com/codychau/c99",
+                    UseShellExecute = true
+                });
+            }
+            catch { }
+        }
         private void OnAIBaseClick(object sender, RoutedEventArgs e) => ShowAIBase();
 
         // ==================== 配置管理 ====================
@@ -233,10 +248,6 @@ namespace C99
                 // 应用各引擎的启动器目录
                 if (_config.EngineLauncherDirs.TryGetValue("llama.cpp", out var llDir))
                     LLamaLauncherDir.Text = llDir;
-                if (_config.EngineLauncherDirs.TryGetValue("vllm", out var vllDir))
-                    VLLMLauncherDir.Text = vllDir;
-                if (_config.EngineLauncherDirs.TryGetValue("lmstudio", out var lmDir))
-                    LMStudioLauncherDir.Text = lmDir;
                 if (_config.EngineLauncherDirs.TryGetValue("ollama", out var olDir))
                     OllamaLauncherDir.Text = olDir;
 
@@ -261,8 +272,6 @@ namespace C99
 
                 // 保存各引擎的启动器目录
                 _config.EngineLauncherDirs["llama.cpp"] = LLamaLauncherDir.Text.Trim();
-                _config.EngineLauncherDirs["vllm"] = VLLMLauncherDir.Text.Trim();
-                _config.EngineLauncherDirs["lmstudio"] = LMStudioLauncherDir.Text.Trim();
                 _config.EngineLauncherDirs["ollama"] = OllamaLauncherDir.Text.Trim();
 
                 ConfigManager.Save(_config);
@@ -391,18 +400,6 @@ namespace C99
             if (folder != null) { LLamaLauncherDir.Text = folder.Path; SaveConfig(); }
         }
 
-        private async void OnBrowseVLLMLauncherDir(object sender, RoutedEventArgs e)
-        {
-            var folder = await PickFolderAsync();
-            if (folder != null) { VLLMLauncherDir.Text = folder.Path; SaveConfig(); }
-        }
-
-        private async void OnBrowseLMStudioLauncherDir(object sender, RoutedEventArgs e)
-        {
-            var folder = await PickFolderAsync();
-            if (folder != null) { LMStudioLauncherDir.Text = folder.Path; SaveConfig(); }
-        }
-
         private async void OnBrowseOllamaLauncherDir(object sender, RoutedEventArgs e)
         {
             var folder = await PickFolderAsync();
@@ -502,6 +499,9 @@ namespace C99
 
                 // 自动搜索该目录下的模型文件（.gguf）
                 await AutoFindModelFilesAsync(dirPath);
+
+                // 默认别名 = 模型子目录名（留空则启动时用 GGUF 原名）
+                LLamaAlias.Text = string.IsNullOrEmpty(Path.GetFileName(dirPath)) ? Path.GetFileNameWithoutExtension(_currentModelFilePath ?? "") : Path.GetFileName(dirPath);
 
                 // 检测到 mmproj 且已选中主模型 → 询问用户是否启用多模态
                 if (_mmprojFilePath != null && _currentModelFilePath != null)
@@ -1038,6 +1038,7 @@ namespace C99
             KbLocalModelFile.Text = _kbConfig.LocalModelFile;
             KbLocalEmbeddingPort.Text = _kbConfig.LocalEmbeddingPort.ToString();
             KbGpuLayers.Text = _kbConfig.GpuLayers.ToString();
+            KbRestartModelMinutes.Text = _kbConfig.RestartModelMinutes.ToString();
 
             // 数据库类型
             if (_kbConfig.DbType == VectorDbType.Milvus || _kbConfig.DbType == VectorDbType.PgVector)
@@ -1063,6 +1064,11 @@ namespace C99
             KbParallelCountSlider.Value = _kbConfig.ParallelCount;
             KbParallelCountText.Text = _kbConfig.ParallelCount.ToString();
             KbSkipFileBtn.IsEnabled = _kbConfig.ParallelCount == 1;
+
+            // 常规选项
+            KbSkipExtEnable.IsChecked = _kbConfig.EnableScanExclude;
+            KbSkipExtList.IsEnabled = _kbConfig.EnableScanExclude;
+            KbSkipExtList.Text = _kbConfig.ScanExcludeExtensions;
 
             _kbInitialized = true;
             UpdateKbActionButtonStates();
@@ -1295,6 +1301,10 @@ namespace C99
                 _kbConfig.LocalEmbeddingPort = localPort;
             if (int.TryParse(KbGpuLayers.Text, out var gpuLayers) && gpuLayers >= -1 && gpuLayers <= 200)
                 _kbConfig.GpuLayers = gpuLayers;
+            if (int.TryParse(KbRestartModelMinutes.Text, out var restartMinutes) && restartMinutes >= 0 && restartMinutes <= 30)
+                _kbConfig.RestartModelMinutes = restartMinutes;
+            _kbConfig.EnableScanExclude = KbSkipExtEnable.IsChecked == true;
+            _kbConfig.ScanExcludeExtensions = KbSkipExtList.Text.Trim();
             _kbConfig.DbType = KbDbExternal.IsChecked == true
                 ? (KbExternalType.SelectedIndex == 0 ? VectorDbType.Milvus : VectorDbType.PgVector)
                 : VectorDbType.BuiltIn;
@@ -1457,6 +1467,26 @@ namespace C99
             KbChunkSeparatorBox.IsEnabled = enabled;
         }
 
+        /// <summary>「禁止扫描此类文件」开关：勾选时启用后缀输入框，关闭时禁用</summary>
+        private void OnKbSkipExtEnableChanged(object sender, RoutedEventArgs e)
+        {
+            if (KbSkipExtList == null) return;
+            KbSkipExtList.IsEnabled = KbSkipExtEnable.IsChecked == true;
+        }
+
+        /// <summary>解析「禁止扫描」后缀列表：逗号分隔，自动补前导点，忽略空白；非法/空返回空集合</summary>
+        private static HashSet<string> ParseKbExcludedExtensions(string raw)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(raw)) return set;
+            foreach (var part in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                string ext = part.StartsWith(".") ? part : "." + part;
+                if (ext.Length > 1) set.Add(ext);
+            }
+            return set;
+        }
+
         /// <summary>添加目录：扫描目录下所有文本文件，切分并向量化入库（后台线程执行，避免卡 UI）</summary>
         private async void OnKbAddDirectory(object sender, RoutedEventArgs e)
         {
@@ -1534,6 +1564,7 @@ namespace C99
             KbAddDirectoryProgress.Visibility = Visibility.Visible;
             KbAddDirectoryProgress.Value = 0;
             KbSkipFileBtn.Visibility = Visibility.Visible;
+            KbPauseScanBtn.Visibility = Visibility.Visible;
             KbCancelScanBtn.Visibility = Visibility.Visible;
             KbDbStatus.Text = "正在扫描目录...";
             _kbAddDirectoryBusy = true;
@@ -1597,16 +1628,31 @@ namespace C99
                     try
                     {
                         // 惰性枚举 => 扫描期间可响应取消，并实时汇报扫描进度
+                        // 禁止扫描的后缀在扫描阶段直接排除（勾选了"禁止扫描此类文件"且列表非空时生效）
+                        var excludedExts = (_kbConfig.EnableScanExclude)
+                            ? ParseKbExcludedExtensions(_kbConfig.ScanExcludeExtensions)
+                            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                         files = new List<string>();
                         int scannedCount = 0;
+                        int excludeCount = 0;
                         foreach (var f in Directory.EnumerateFiles(dir, "*.*", SearchOption.AllDirectories))
                         {
                             scanCts.Token.ThrowIfCancellationRequested();
-                            if (KbTextExtensions.Contains(Path.GetExtension(f)))
+                            string ext = Path.GetExtension(f);
+                            if (excludedExts.Count > 0 && excludedExts.Contains(ext))
+                            {
+                                excludeCount++;
+                                if ((excludeCount & 0x3F) == 0)
+                                    ReportKb(0, $"正在扫描目录...（已排除 {excludeCount} 个禁扫文件）");
+                                continue;
+                            }
+                            if (KbTextExtensions.Contains(ext))
                                 files.Add(f);
                             if ((++scannedCount & 0x3F) == 0)
                                 ReportKb(0, $"正在扫描目录...（已扫描 {scannedCount} 个文件）");
                         }
+                        if (excludeCount > 0)
+                            skippedFiles += excludeCount;
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
@@ -1727,6 +1773,39 @@ namespace C99
                     string? skipFile = null;
                     int skippedFromButton = 0;
 
+                    // 定期重启本地向量模型：向量化过程中每隔 N 分钟暂停向量化 → 重启模型 → 自动继续（仅本地模式且 N>0 生效）
+                    int restartMinutes = Math.Max(0, Math.Min(30, _kbConfig.RestartModelMinutes));
+                    using var restartCts = CancellationTokenSource.CreateLinkedTokenSource(scanCts.Token);
+                    Task? restartLoop = null;
+                    if (restartMinutes > 0 && _kbConfig.VectorModel == "local")
+                    {
+                        restartLoop = Task.Run(async () =>
+                        {
+                            var restartSw = Stopwatch.StartNew();
+                            while (!restartCts.IsCancellationRequested)
+                            {
+                                await Task.Delay(1000, restartCts.Token);
+                                if (scanCts.IsCancellationRequested) break;
+                                if (restartSw.Elapsed.TotalMinutes >= restartMinutes)
+                                {
+                                    long cur = Interlocked.Read(ref processedChunks);
+                                    ReportKb((double)cur / totalChunks, $"⏸ 已运行 {restartMinutes} 分钟，正在重启向量模型…");
+                                    try
+                                    {
+                                        await _kbEmbedding.RestartLocalServerAsync(_kbConfig, restartCts.Token);
+                                        ReportKb((double)cur / totalChunks, $"▶ 向量模型已重启，继续处理（已处理 {cur}/{totalChunks}）");
+                                    }
+                                    catch (OperationCanceledException) { break; }
+                                    catch (Exception rex)
+                                    {
+                                        ReportKb((double)cur / totalChunks, $"⚠ 向量模型重启失败：{rex.Message}，继续尝试");
+                                    }
+                                    restartSw.Restart();
+                                }
+                            }
+                        }, restartCts.Token);
+                    }
+
                     // 处理一批切片（一批 = 内存中的 80000 或一个 .cut 溢出文件）
                     async Task ProcessBatchAsync(List<KnowledgeChunk> batch)
                     {
@@ -1838,6 +1917,12 @@ namespace C99
                         catch { batch = new List<KnowledgeChunk>(); } // 读取损坏的溢出文件按空批处理
                         try { File.Delete(sp); } catch { }
                     }
+                    // 结束前取消并等待定时重启任务退出，避免返回后仍残留重启操作
+                    restartCts.Cancel();
+                    if (restartLoop != null)
+                    {
+                        try { await restartLoop; } catch { }
+                    }
                     try { Directory.Delete(spillRoot, true); } catch { }
                     _kbSkipFileCts = null;
                     ReportKb(1.0, $"向量化/入库完成（{Interlocked.Read(ref processedChunks)}/{totalChunks}）");
@@ -1891,11 +1976,13 @@ namespace C99
                 _kbScanCts = null;
                 _kbSkipFileCts = null;
                 _kbCancelling = false;
+                _kbPausing = false;
                 UpdateKbActionButtonStates();
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     KbAddDirectoryProgress.Visibility = Visibility.Collapsed;
                     KbSkipFileBtn.Visibility = Visibility.Collapsed;
+                    KbPauseScanBtn.Visibility = Visibility.Collapsed;
                     KbCancelScanBtn.Visibility = Visibility.Collapsed;
                     KbCancelScanBtn.Opacity = 1.0;
                     KbCancelScanBtn.SetBusy(false);
@@ -1907,6 +1994,32 @@ namespace C99
         private void OnKbSkipCurrentFile(object sender, RoutedEventArgs e)
         {
             _kbSkipFileCts?.Cancel();
+        }
+
+        /// <summary>扫描过程中点击「暂停」：手动暂停向量化（阻塞新请求→等在途请求清空→重启向量模型→自动继续）</summary>
+        private async void OnKbPauseScan(object sender, RoutedEventArgs e)
+        {
+            if (_kbPausing) return;
+            if (KbPauseScanBtn == null || KbCancelScanBtn == null) return;
+            _kbPausing = true;
+            KbPauseScanBtn.IsEnabled = false;
+            KbCancelScanBtn.IsEnabled = false;
+            try
+            {
+                KbDbStatus.Text = "⏸ 正在暂停向量化并重启向量模型…";
+                await _kbEmbedding.RestartLocalServerAsync(_kbConfig);
+                KbDbStatus.Text = "▶ 已暂停并重启完成，继续处理";
+            }
+            catch (Exception ex)
+            {
+                KbDbStatus.Text = $"⚠ 暂停/重启失败：{ex.Message}";
+            }
+            finally
+            {
+                _kbPausing = false;
+                if (KbPauseScanBtn != null) KbPauseScanBtn.IsEnabled = true;
+                if (KbCancelScanBtn != null) KbCancelScanBtn.IsEnabled = true;
+            }
         }
 
         /// <summary>扫描过程中点击「取消」</summary>
@@ -2553,8 +2666,6 @@ namespace C99
                 : (EngineSelector.SelectedItem as ComboBoxItem)?.Content?.ToString();
 
             LLamaCPPParams.Visibility = engine == "llama.cpp" ? Visibility.Visible : Visibility.Collapsed;
-            VLLMParams.Visibility = engine == "vllm" ? Visibility.Visible : Visibility.Collapsed;
-            LMStudioParams.Visibility = engine == "lmstudio" ? Visibility.Visible : Visibility.Collapsed;
             OllamaParams.Visibility = engine == "ollama" ? Visibility.Visible : Visibility.Collapsed;
 
             // 切换到当前引擎的预设
@@ -2590,8 +2701,6 @@ namespace C99
             switch (engine)
             {
                 case "llama.cpp": ApplyLLamaPreset(preset); break;
-                case "vllm": ApplyVLLMPreset(preset); break;
-                case "lmstudio": ApplyLMStudioPreset(preset); break;
                 case "ollama": ApplyOllamaPreset(preset); break;
             }
         }
@@ -2643,53 +2752,6 @@ namespace C99
             }
         }
 
-        // ---- vllm 预设 ----
-        private void ApplyVLLMPreset(string preset)
-        {
-            switch (preset)
-            {
-                case "推荐":
-                    VLLMTensorParallel.Value = 1; VLLMMaxLen.Value = 8192;
-                    VLLMBatchSize.Value = 128; VLLMQuantization.SelectedIndex = 0;
-                    VLLMExtraArgs.Text = "--enforce-eager";
-                    break;
-                case "默认":
-                    VLLMTensorParallel.Value = 1; VLLMMaxLen.Value = 4096;
-                    VLLMBatchSize.Value = 32; VLLMQuantization.SelectedIndex = 0;
-                    VLLMExtraArgs.Text = "";
-                    break;
-                case "暴力":
-                    VLLMTensorParallel.Value = Math.Min(Environment.ProcessorCount / 2, 8);
-                    VLLMMaxLen.Value = 65536; VLLMBatchSize.Value = 512;
-                    VLLMQuantization.SelectedIndex = 1; // awq
-                    VLLMExtraArgs.Text = "--disable-custom-all-reduce --num-scheduler-steps 16";
-                    break;
-            }
-        }
-
-        // ---- lmstudio 预设 ----
-        private void ApplyLMStudioPreset(string preset)
-        {
-            switch (preset)
-            {
-                case "推荐":
-                    LMStudioGPULayers.Value = 35; LMStudioContextSize.Value = 8192;
-                    LMStudioThreads.Value = Environment.ProcessorCount;
-                    LMStudioExtraArgs.Text = "--mlock";
-                    break;
-                case "默认":
-                    LMStudioGPULayers.Value = 0; LMStudioContextSize.Value = 4096;
-                    LMStudioThreads.Value = 4;
-                    LMStudioExtraArgs.Text = "";
-                    break;
-                case "暴力":
-                    LMStudioGPULayers.Value = 99; LMStudioContextSize.Value = 32768;
-                    LMStudioThreads.Value = Environment.ProcessorCount;
-                    LMStudioExtraArgs.Text = "--mlock --no-mmap";
-                    break;
-            }
-        }
-
         // ---- ollama 预设 ----
         private void ApplyOllamaPreset(string preset)
         {
@@ -2733,6 +2795,7 @@ namespace C99
             if (sender is Slider sl)
             {
                 if (sl == LLamaGPULayers && LLamaGPULayersText != null) LLamaGPULayersText.Text = ((int)e.NewValue).ToString();
+                else if (sl == LLamaNCpuMoe && LLamaNCpuMoeText != null) LLamaNCpuMoeText.Text = ((int)e.NewValue).ToString();
                 else if (sl == LLamaContextSize && LLamaContextSizeText != null) LLamaContextSizeText.Text = ((int)e.NewValue).ToString();
                 else if (sl == LLamaNPredict && LLamaNPredictText != null) LLamaNPredictText.Text = ((int)e.NewValue).ToString();
                 else if (sl == LLamaThreads && LLamaThreadsText != null) LLamaThreadsText.Text = ((int)e.NewValue).ToString();
@@ -2759,6 +2822,11 @@ namespace C99
         {
             if (double.TryParse(LLamaGPULayersText.Text, out var v) && v >= 0 && v <= 200)
                 LLamaGPULayers.Value = v;
+        }
+        private void OnLLamaNCpuMoeTextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (double.TryParse(LLamaNCpuMoeText.Text, out var v) && v >= 0 && v <= 64)
+                LLamaNCpuMoe.Value = v;
         }
         private void OnLLamaContextSizeTextChanged(object sender, TextChangedEventArgs e)
         {
@@ -2789,63 +2857,6 @@ namespace C99
         {
             if (double.TryParse(LLamaParallelText.Text, out var v) && v >= 1 && v <= 16)
                 LLamaParallel.Value = v;
-        }
-
-        // ==================== vllm 参数同步 ====================
-
-        private void OnVLLMValueChanged(object sender, RangeBaseValueChangedEventArgs e)
-        {
-            if (VLLMTensorParallelText == null) return;
-            if (sender is Slider sl)
-            {
-                if (sl == VLLMTensorParallel && VLLMTensorParallelText != null) VLLMTensorParallelText.Text = ((int)e.NewValue).ToString();
-                else if (sl == VLLMMaxLen && VLLMMaxLenText != null) VLLMMaxLenText.Text = ((int)e.NewValue).ToString();
-                else if (sl == VLLMBatchSize && VLLMBatchSizeText != null) VLLMBatchSizeText.Text = ((int)e.NewValue).ToString();
-            }
-        }
-        private void OnVLLMSelectionChanged(object sender, SelectionChangedEventArgs e) { }
-        private void OnVLLMTensorParallelTextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (double.TryParse(VLLMTensorParallelText.Text, out var v) && v >= 1 && v <= 8)
-                VLLMTensorParallel.Value = v;
-        }
-        private void OnVLLMMaxLenTextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (double.TryParse(VLLMMaxLenText.Text, out var v) && v >= 2048 && v <= 65536)
-                VLLMMaxLen.Value = v;
-        }
-        private void OnVLLMBatchSizeTextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (double.TryParse(VLLMBatchSizeText.Text, out var v) && v >= 1 && v <= 512)
-                VLLMBatchSize.Value = v;
-        }
-
-        // ==================== LM Studio 参数同步 ====================
-
-        private void OnLMStudioValueChanged(object sender, RangeBaseValueChangedEventArgs e)
-        {
-            if (LMStudioGPULayersText == null) return;
-            if (sender is Slider sl)
-            {
-                if (sl == LMStudioGPULayers && LMStudioGPULayersText != null) LMStudioGPULayersText.Text = ((int)e.NewValue).ToString();
-                else if (sl == LMStudioContextSize && LMStudioContextSizeText != null) LMStudioContextSizeText.Text = ((int)e.NewValue).ToString();
-                else if (sl == LMStudioThreads && LMStudioThreadsText != null) LMStudioThreadsText.Text = ((int)e.NewValue).ToString();
-            }
-        }
-        private void OnLMStudioGPULayersTextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (double.TryParse(LMStudioGPULayersText.Text, out var v) && v >= 0 && v <= 100)
-                LMStudioGPULayers.Value = v;
-        }
-        private void OnLMStudioContextSizeTextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (double.TryParse(LMStudioContextSizeText.Text, out var v) && v >= 512 && v <= 32768)
-                LMStudioContextSize.Value = v;
-        }
-        private void OnLMStudioThreadsTextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (double.TryParse(LMStudioThreadsText.Text, out var v) && v >= 1 && v <= 64)
-                LMStudioThreads.Value = v;
         }
 
         // ==================== Ollama 参数同步 ====================
@@ -2907,8 +2918,6 @@ namespace C99
                 switch (engine)
                 {
                     case "llama.cpp": await RunLLamaCPP(); break;
-                    case "vllm": await RunVLLM(); break;
-                    case "lmstudio": await RunLMStudio(); break;
                     case "ollama": await RunOllama(); break;
                 }
             }
@@ -3013,6 +3022,8 @@ namespace C99
             if (!string.IsNullOrEmpty(dev)) argsList.Add($"-dev {dev}");
             string ts = LLamaTensorSplit.Text.Trim();
             if (!string.IsNullOrEmpty(ts)) argsList.Add($"-ts {ts}");
+            int nCpuMoe = (int)LLamaNCpuMoe.Value;
+            if (nCpuMoe > 0) argsList.Add($"--n-cpu-moe {nCpuMoe}");
 
             // ---- 采样参数 ----
             string temp = LLamaTemperature.Text.Trim();
@@ -3059,6 +3070,9 @@ namespace C99
                     argsList.Add($"--host {host}");
                 if (!argsList.Exists(a => a.StartsWith("--port", StringComparison.OrdinalIgnoreCase)))
                     argsList.Add($"--port {port}");
+                string alias = LLamaAlias.Text.Trim();
+                if (!string.IsNullOrEmpty(alias) && !argsList.Exists(a => a.StartsWith("--alias", StringComparison.OrdinalIgnoreCase)))
+                    argsList.Add($"--alias \"{alias}\"");
             }
 
             string args = string.Join(" ", argsList);
@@ -3308,97 +3322,6 @@ namespace C99
         }
 
         // ==================== llama.cpp 环境检测 ====================
-
-        // ---- vllm 运行 ----
-        private async Task RunVLLM()
-        {
-            // 从统一模型目录获取模型路径
-            string? modelPath = GetCurrentModelPath();
-            if (string.IsNullOrEmpty(modelPath))
-            {
-                await ShowDialogAsync("错误", "请先在顶部「模型目录」中选择模型子目录");
-                ResetRunButton();
-                return;
-            }
-            string model = modelPath;
-
-            int tp = (int)VLLMTensorParallel.Value;
-            int maxLen = (int)VLLMMaxLen.Value;
-            int batch = (int)VLLMBatchSize.Value;
-            string quant = (VLLMQuantization.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "none";
-            string extra = VLLMExtraArgs.Text.Trim();
-
-            string args = $"{model} --tensor-parallel-size {tp} --max-model-len {maxLen} --max-batch-size {batch}";
-            if (quant != "none") args += $" --quantization {quant}";
-            if (!string.IsNullOrEmpty(extra)) args += " " + extra;
-
-            AppendLog("启动 vLLM（需要 Python 环境）");
-            AppendLog($"命令: python -m vllm.entrypoints.openai.api_server {args}");
-
-            await StartProcessAsync("python", $"-m vllm.entrypoints.openai.api_server {args}");
-        }
-
-        // ---- LM Studio 运行 ----
-        private async Task RunLMStudio()
-        {
-            // 从统一模型目录获取模型路径
-            string? modelPath = GetCurrentModelPath();
-            if (string.IsNullOrEmpty(modelPath) || !File.Exists(modelPath))
-            {
-                await ShowDialogAsync("错误", "请先在顶部「模型目录」中选择包含 .gguf 文件的子目录");
-                ResetRunButton();
-                return;
-            }
-
-            // 查找 LM Studio 安装路径（优先使用本引擎的工作目录）
-            string lmStudioPath = FindLMStudioExe();
-            if (string.IsNullOrEmpty(lmStudioPath))
-            {
-                await ShowDialogAsync("错误", "未找到 LM Studio 可执行文件，请设置本引擎的「启动器工作目录」");
-                ResetRunButton();
-                return;
-            }
-
-            int ngl = (int)LMStudioGPULayers.Value;
-            int ctx = (int)LMStudioContextSize.Value;
-            int threads = (int)LMStudioThreads.Value;
-            string extra = LMStudioExtraArgs.Text.Trim();
-
-            string args = $"--model \"{modelPath}\" -ngl {ngl} -c {ctx} -t {threads}";
-            if (!string.IsNullOrEmpty(extra)) args += " " + extra;
-
-            AppendLog($"程序: {lmStudioPath}");
-            AppendLog($"参数: {args}");
-
-            await StartProcessAsync(lmStudioPath, args);
-        }
-
-        private string FindLMStudioExe()
-        {
-            // 1. 优先在本引擎的启动器工作目录中搜索
-            string workDir = LMStudioLauncherDir.Text.Trim();
-            if (!string.IsNullOrEmpty(workDir) && Directory.Exists(workDir))
-            {
-                string[] workDirExes = { "LM Studio.exe", "lmstudio.exe" };
-                foreach (var exe in workDirExes)
-                {
-                    string full = Path.Combine(workDir, exe);
-                    if (File.Exists(full)) return full;
-                }
-            }
-
-            // 2. 常见安装路径
-            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            string[] candidates = new[]
-            {
-                Path.Combine(localAppData, "LM Studio", "LM Studio.exe"),
-                Path.Combine(localAppData, "Programs", "LM Studio", "LM Studio.exe"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "LM Studio", "LM Studio.exe"),
-            };
-            foreach (var c in candidates)
-                if (File.Exists(c)) return c;
-            return string.Empty;
-        }
 
         // ---- Ollama 运行 ----
         private async Task RunOllama()
@@ -3661,8 +3584,6 @@ namespace C99
             string dir = key switch
             {
                 "llama.cpp" => LLamaLauncherDir?.Text?.Trim() ?? "",
-                "vllm" => VLLMLauncherDir?.Text?.Trim() ?? "",
-                "lmstudio" => LMStudioLauncherDir?.Text?.Trim() ?? "",
                 "ollama" => OllamaLauncherDir?.Text?.Trim() ?? "",
                 _ => ""
             };
@@ -3673,7 +3594,6 @@ namespace C99
             {
                 "llama.cpp" => !string.IsNullOrEmpty(FindLLamaExe()),
                 "ollama" => !string.IsNullOrEmpty(FindOllamaExe()),
-                "lmstudio" => !string.IsNullOrEmpty(FindLMStudioExe()),
                 _ => false
             };
         }
@@ -3985,6 +3905,27 @@ namespace C99
             if (GatewayUpstreamBox != null)
                 GatewayUpstreamBox.Text = _dreamConfig.GatewayConfig.UpstreamPath;
 
+            if (GatewayRoutingModeCombo != null)
+                GatewayRoutingModeCombo.SelectedIndex = (int)_dreamConfig.GatewayConfig.RoutingMode;
+
+            if (GatewayStrictCheckBox != null)
+                GatewayStrictCheckBox.IsChecked = _dreamConfig.GatewayConfig.StrictModelCheck;
+
+            if (GatewayOneToManyModelNameBox != null)
+                GatewayOneToManyModelNameBox.Text = _dreamConfig.GatewayConfig.OneToManyModelName;
+
+            if (GatewayOneToOnePanel != null)
+                GatewayOneToOnePanel.Visibility = _dreamConfig.GatewayConfig.RoutingMode == GatewayRoutingMode.OneToOne
+                    ? Microsoft.UI.Xaml.Visibility.Visible
+                    : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+            if (GatewayOneToManyPanel != null)
+                GatewayOneToManyPanel.Visibility = _dreamConfig.GatewayConfig.RoutingMode == GatewayRoutingMode.OneToMany
+                    ? Microsoft.UI.Xaml.Visibility.Visible
+                    : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+            RefreshGatewayModelsListUI();
+
             UpdateDreamFactoryStatusUI();
             RefreshGatewayStatusUI();
         }
@@ -4063,6 +4004,20 @@ namespace C99
             // 模型网关配置
             if (GatewayUpstreamBox != null)
                 _dreamConfig.GatewayConfig.UpstreamPath = GatewayUpstreamBox.Text.Trim();
+
+            if (GatewayRoutingModeCombo?.SelectedItem is Microsoft.UI.Xaml.Controls.ComboBoxItem modeItem)
+                _dreamConfig.GatewayConfig.RoutingMode = modeItem.Tag?.ToString() == "OneToMany"
+                    ? GatewayRoutingMode.OneToMany
+                    : GatewayRoutingMode.OneToOne;
+
+            if (GatewayStrictCheckBox != null)
+                _dreamConfig.GatewayConfig.StrictModelCheck = GatewayStrictCheckBox.IsChecked == true;
+
+            if (GatewayOneToManyModelNameBox != null)
+            {
+                string modelName = GatewayOneToManyModelNameBox.Text.Trim();
+                _dreamConfig.GatewayConfig.OneToManyModelName = string.IsNullOrEmpty(modelName) ? "gateway-model" : modelName;
+            }
         }
 
         private void UpdateDreamFactoryStatusUI()
@@ -4503,6 +4458,242 @@ namespace C99
             _dreamConfig.GatewayConfig.UpstreamPath = GatewayUpstreamBox?.Text.Trim() ?? "";
             SaveDreamFactoryConfig();
             RefreshGatewayStatusUI();
+        }
+
+        private void OnGatewayRoutingModeChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isLoadingDreamConfig || GatewayRoutingModeCombo == null) return;
+            var selected = GatewayRoutingModeCombo.SelectedItem as Microsoft.UI.Xaml.Controls.ComboBoxItem;
+            if (selected == null) return;
+
+            var mode = selected.Tag?.ToString() == "OneToMany"
+                ? GatewayRoutingMode.OneToMany
+                : GatewayRoutingMode.OneToOne;
+
+            _dreamConfig.GatewayConfig.RoutingMode = mode;
+
+            if (GatewayOneToOnePanel != null)
+                GatewayOneToOnePanel.Visibility = mode == GatewayRoutingMode.OneToOne
+                    ? Microsoft.UI.Xaml.Visibility.Visible
+                    : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+            if (GatewayOneToManyPanel != null)
+                GatewayOneToManyPanel.Visibility = mode == GatewayRoutingMode.OneToMany
+                    ? Microsoft.UI.Xaml.Visibility.Visible
+                    : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+            SaveDreamFactoryConfig();
+            RefreshGatewayStatusUI();
+        }
+
+        private void OnGatewayConfigChanged(object sender, RoutedEventArgs e)
+        {
+            if (_isLoadingDreamConfig) return;
+            if (GatewayStrictCheckBox != null)
+                _dreamConfig.GatewayConfig.StrictModelCheck = GatewayStrictCheckBox.IsChecked == true;
+            SaveDreamFactoryConfig();
+        }
+
+        private void OnGatewayOneToManyModelNameChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_isLoadingDreamConfig) return;
+            _dreamConfig.GatewayConfig.OneToManyModelName = GatewayOneToManyModelNameBox?.Text.Trim() is string s && !string.IsNullOrEmpty(s) ? s : "gateway-model";
+            SaveDreamFactoryConfig();
+        }
+
+        private async void OnGatewayRefreshModelsClick(object sender, RoutedEventArgs e)
+        {
+            await RefreshGatewayAvailableModelsAsync();
+        }
+
+        private async Task RefreshGatewayAvailableModelsAsync()
+        {
+            if (GatewayModelsListPanel == null) return;
+
+            ShowToast("正在枚举可用模型...");
+
+            var availableModels = new List<(string Name, string ApiUrl, string ModelName, string ApiKey)>();
+            var seenKeys = new HashSet<string>();
+
+            // 1. 枚举内置模型
+            var builtInModels = new[]
+            {
+                ("llama.cpp", "Local llama.cpp"),
+                ("ollama", "Local ollama"),
+                ("vllm", "Local vllm"),
+                ("lmstudio", "Local lmstudio"),
+            };
+
+            foreach (var (key, displayName) in builtInModels)
+            {
+                if (!IsBaseEngineConfigured(key)) continue;
+                var (apiUrl, _, port) = ResolveBuiltInEndpoint(key);
+                if (string.IsNullOrEmpty(apiUrl)) continue;
+
+                string baseUrl = apiUrl;
+                if (baseUrl.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+                    baseUrl = baseUrl[..baseUrl.LastIndexOf("/chat/completions", StringComparison.OrdinalIgnoreCase)].TrimEnd('/');
+
+                // 对于 llama.cpp 和 lmstudio：扫描模型目录下的所有 .gguf 文件
+                if (key is "llama.cpp" or "lmstudio")
+                {
+                    string modelDir = _config.SelectedModelSubDirFullPath;
+                    if (!string.IsNullOrEmpty(modelDir) && Directory.Exists(modelDir))
+                    {
+                        var ggufFiles = GetModelGgufFiles(modelDir);
+                        foreach (var ggufFile in ggufFiles)
+                        {
+                            string modelName = Path.GetFileNameWithoutExtension(ggufFile);
+                            if (string.IsNullOrEmpty(modelName)) continue;
+
+                            string dedupeKey = baseUrl + "|" + modelName;
+                            if (!seenKeys.Add(dedupeKey)) continue;
+
+                            availableModels.Add(($"[内置] {displayName} - {modelName}", apiUrl, modelName, ""));
+                        }
+                    }
+                    else
+                    {
+                        // 没有模型目录，添加默认的 local-model
+                        string dedupeKey = baseUrl + "|local-model";
+                        if (seenKeys.Add(dedupeKey))
+                            availableModels.Add(($"[内置] {displayName}", apiUrl, "local-model", ""));
+                    }
+                }
+                else
+                {
+                    // 对于 ollama/vllm：调用 /models API 获取已加载的模型
+                    try
+                    {
+                        using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                        using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, baseUrl + "/models");
+                        using var resp = await http.SendAsync(req);
+                        if (resp.IsSuccessStatusCode)
+                        {
+                            string json = await resp.Content.ReadAsStringAsync();
+                            using var doc = System.Text.Json.JsonDocument.Parse(json);
+                            if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            {
+                                foreach (var item in data.EnumerateArray())
+                                {
+                                    if (item.TryGetProperty("id", out var id))
+                                    {
+                                        string modelName = id.GetString() ?? "";
+                                        if (string.IsNullOrEmpty(modelName)) continue;
+
+                                        string dedupeKey = baseUrl + "|" + modelName;
+                                        if (!seenKeys.Add(dedupeKey)) continue;
+
+                                        availableModels.Add(($"[内置] {displayName} - {modelName}", apiUrl, modelName, ""));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            // 2. 枚举外部模型（如果配置了外部 API）
+            if (!string.IsNullOrEmpty(_config.ExternalLLMApiUrl))
+            {
+                try
+                {
+                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                    string modelsUrl = _config.ExternalLLMApiUrl.TrimEnd('/') + "/models";
+                    using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, modelsUrl);
+                    if (!string.IsNullOrEmpty(_config.ExternalLLMApiKey))
+                        req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {_config.ExternalLLMApiKey}");
+
+                    using var resp = await http.SendAsync(req);
+                    if (resp.IsSuccessStatusCode)
+                    {
+                        string json = await resp.Content.ReadAsStringAsync();
+                        using var doc = System.Text.Json.JsonDocument.Parse(json);
+                        if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == System.Text.Json.JsonValueKind.Array)
+                        {
+                            foreach (var item in data.EnumerateArray())
+                            {
+                                if (item.TryGetProperty("id", out var id))
+                                {
+                                    string modelName = id.GetString() ?? "";
+                                    if (string.IsNullOrEmpty(modelName)) continue;
+
+                                    string dedupeKey = _config.ExternalLLMApiUrl + "|" + modelName;
+                                    if (!seenKeys.Add(dedupeKey)) continue;
+
+                                    availableModels.Add(($"[外部] {modelName}", _config.ExternalLLMApiUrl, modelName, _config.ExternalLLMApiKey ?? ""));
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // 3. 获取已启用的端点（用于保持勾选状态）
+            var enabledEndpoints = _dreamConfig.GatewayConfig.OneToManyEndpoints
+                .Where(ep => ep.Enabled)
+                .Select(ep => ep.ApiUrl + "|" + ep.ModelName)
+                .ToHashSet();
+
+            // 4. 重建端点列表（保留已启用的）
+            _dreamConfig.GatewayConfig.OneToManyEndpoints.Clear();
+            int priority = 0;
+            bool isBuiltInMode = _dreamConfig.ModelSource == "BuiltIn";
+            foreach (var (name, apiUrl, modelName, apiKey) in availableModels)
+            {
+                string key = apiUrl + "|" + modelName;
+                bool wasEnabled = enabledEndpoints.Contains(key);
+                // 如果是内置预设模式，内置模型默认启用
+                bool defaultEnabled = isBuiltInMode && name.StartsWith("[内置]");
+
+                _dreamConfig.GatewayConfig.OneToManyEndpoints.Add(new GatewayModelEndpoint
+                {
+                    Name = name,
+                    ApiUrl = apiUrl,
+                    ModelName = modelName,
+                    ApiKey = apiKey,
+                    Enabled = wasEnabled || defaultEnabled,
+                    Priority = priority++
+                });
+            }
+
+            RefreshGatewayModelsListUI();
+            SaveDreamFactoryConfig();
+
+            ShowToast($"已枚举 {availableModels.Count} 个可用模型");
+        }
+
+        private void RefreshGatewayModelsListUI()
+        {
+            if (GatewayModelsListPanel == null) return;
+
+            GatewayModelsListPanel.Children.Clear();
+
+            foreach (var endpoint in _dreamConfig.GatewayConfig.OneToManyEndpoints)
+            {
+                var checkBox = new Microsoft.UI.Xaml.Controls.CheckBox
+                {
+                    Content = $"{endpoint.Name} ({endpoint.ModelName})",
+                    IsChecked = endpoint.Enabled,
+                    Tag = endpoint,
+                    Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 4)
+                };
+                checkBox.Checked += OnGatewayModelCheckBoxChanged;
+                checkBox.Unchecked += OnGatewayModelCheckBoxChanged;
+                GatewayModelsListPanel.Children.Add(checkBox);
+            }
+        }
+
+        private void OnGatewayModelCheckBoxChanged(object sender, RoutedEventArgs e)
+        {
+            if (_isLoadingDreamConfig) return;
+            if (sender is not Microsoft.UI.Xaml.Controls.CheckBox cb) return;
+            if (cb.Tag is not GatewayModelEndpoint endpoint) return;
+
+            endpoint.Enabled = cb.IsChecked == true;
+            SaveDreamFactoryConfig();
         }
 
         private void OnGatewayCopyClick(object sender, RoutedEventArgs e)
