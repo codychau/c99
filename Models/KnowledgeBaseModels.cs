@@ -88,6 +88,9 @@ namespace C99.Models
         /// <summary>召回：Top-K 默认值</summary>
         public int TopK { get; set; } = 5;
 
+        /// <summary>召回：相似度阈值百分比（0=不限；如 50 表示只保留相似度 >=0.5 的结果）</summary>
+        public int SimilarityThresholdPercent { get; set; } = 0;
+
         /// <summary>并行向量化文件数（1-32，默认3）</summary>
         public int ParallelCount { get; set; } = 3;
     }

@@ -217,7 +217,7 @@ namespace C99.Services
                 upstreamUrl = ResolveEndpointChatUrl(endpoint);
                 auth = string.IsNullOrEmpty(endpoint.ApiKey) ? GetAuth(request) : $"Bearer {endpoint.ApiKey}";
                 body = RebuildBodyWithModel(body, endpoint.ModelName);
-                log?.Invoke($"一对多模式: 使用端点 '{endpoint.Name}'，模型 '{endpoint.ModelName}'");
+                log?.Invoke($"一对多模式: 使用端点 '{endpoint.Name}'，模型 '{endpoint.ModelName}'，地址 '{upstreamUrl}'");
             }
             else
             {
@@ -330,10 +330,14 @@ namespace C99.Services
             }
         }
 
-        /// <summary>解析指定端点的 chat 完整地址</summary>
+        /// <summary>解析指定端点的 chat 完整地址：基地址自动补 /chat/completions（兼容仅填写基地址或完整路径两种格式）</summary>
         private string ResolveEndpointChatUrl(GatewayModelEndpoint endpoint)
         {
-            return DreamFactoryConfig.NormalizeConnectableUrl(endpoint.ApiUrl);
+            string url = DreamFactoryConfig.NormalizeConnectableUrl(endpoint.ApiUrl);
+            if (string.IsNullOrEmpty(url)) return url;
+            if (!url.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+                url += "/chat/completions";
+            return url;
         }
 
         /// <summary>GET /gateway/v1/models：根据路由模式返回模型列表</summary>

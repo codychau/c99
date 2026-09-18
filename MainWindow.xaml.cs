@@ -1059,6 +1059,8 @@ namespace C99
             KbNewCollectionName.Text = _kbConfig.CollectionName;
             KbTopKSlider.Value = _kbConfig.TopK;
             KbTopKText.Text = _kbConfig.TopK.ToString();
+            KbThresholdSlider.Value = _kbConfig.SimilarityThresholdPercent;
+            KbThresholdText.Text = $"{_kbConfig.SimilarityThresholdPercent}%";
 
             // 并行文件数
             KbParallelCountSlider.Value = _kbConfig.ParallelCount;
@@ -1317,6 +1319,7 @@ namespace C99
             if (!string.IsNullOrWhiteSpace(KbNewCollectionName.Text))
                 _kbConfig.CollectionName = KbNewCollectionName.Text.Trim();
             _kbConfig.TopK = (int)KbTopKSlider.Value;
+            _kbConfig.SimilarityThresholdPercent = (int)KbThresholdSlider.Value;
         }
 
         private void SaveKbConfig()
@@ -1503,6 +1506,7 @@ namespace C99
             int chunkSize = int.TryParse(KbChunkSizeBox.Text, out var cs) && cs > 0 ? cs : 500;
             bool splitByParagraph = KbChunkByParagraph.IsChecked == true;
             string paragraphSeparator = ParseParagraphSeparator(KbChunkSeparatorBox.Text);
+            bool codeOptimize = KbChunkCodeOptimize.IsChecked == true;
 
             // 先确保已连接（连接本身可能走网络/IO），同时把集合创建也放到后台
             if (!await EnsureKbStoreConnected())
@@ -1632,12 +1636,24 @@ namespace C99
                         var excludedExts = (_kbConfig.EnableScanExclude)
                             ? ParseKbExcludedExtensions(_kbConfig.ScanExcludeExtensions)
                             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        // 代码优化开启时顺带排除版本控制目录
+                        HashSet<string> excludedDirs = codeOptimize
+                            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".git", ".svn" }
+                            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                         files = new List<string>();
                         int scannedCount = 0;
                         int excludeCount = 0;
                         foreach (var f in Directory.EnumerateFiles(dir, "*.*", SearchOption.AllDirectories))
                         {
                             scanCts.Token.ThrowIfCancellationRequested();
+                            if (excludedDirs.Count > 0
+                                && Path.GetRelativePath(dir, f)
+                                    .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                                    .Any(seg => excludedDirs.Contains(seg)))
+                            {
+                                excludeCount++;
+                                continue;
+                            }
                             string ext = Path.GetExtension(f);
                             if (excludedExts.Count > 0 && excludedExts.Contains(ext))
                             {
@@ -1706,7 +1722,9 @@ namespace C99
                             catch { skippedFiles++; continue; } // 跳过无法读取的文件（如二进制误匹配）
                             if (string.IsNullOrWhiteSpace(text)) { skippedFiles++; continue; }
 
-                            var rawChunks = SplitChunks(text, chunkSize, splitByParagraph, paragraphSeparator);
+                            var rawChunks = codeOptimize
+                                ? OptimizeCodeChunking(text, Path.GetExtension(file), chunkSize, splitByParagraph, paragraphSeparator)
+                                : SplitChunks(text, chunkSize, splitByParagraph, paragraphSeparator);
                             if (rawChunks.Count == 0) { skippedFiles++; continue; }
                             for (int c = 0; c < rawChunks.Count; c++)
                             {
@@ -2151,6 +2169,16 @@ namespace C99
             public List<KbChunkNodeInfo>? Children { get; } = null;
         }
 
+        /// <summary>召回结果条目（绑定 KbResultsList，携带切片 Id 供选中后删除）</summary>
+        private sealed class KbResultItem
+        {
+            public string Id { get; set; } = "";
+            public string Title { get; set; } = "";
+            public string Score { get; set; } = "";
+            public string Preview { get; set; } = "";
+            public string Source { get; set; } = "";
+        }
+
         /// <summary>把文本压缩成单行并截断：去掉换行/制表符等空白，超长时加省略号，用于树节点显示不撑高列表行</summary>
         private static string FlattenSingleLine(string text, int maxLen)
         {
@@ -2168,6 +2196,179 @@ namespace C99
             string flat = sb.ToString().Trim();
             if (flat.Length <= maxLen) return flat;
             return flat.Substring(0, maxLen).TrimEnd() + "…";
+        }
+
+        /// <summary>
+        /// 代码切块优化：按文件类型做结构化切分。
+        /// - HTML：剔除 head/script/style 后按块级标签逐个提取正文成一个切片；
+        /// - Markdown / TXT：走 <see cref="SplitByStructureMarkers"/>，按标题与横线等标记拆分；
+        /// 无法识别结构化标记时回退到常规切分。
+        /// </summary>
+        private static List<string> OptimizeCodeChunking(string text, string extension, int chunkSize, bool byParagraph, string separator)
+        {
+            var options = System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline;
+
+            if (extension.Equals(".html", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".htm", StringComparison.OrdinalIgnoreCase))
+            {
+                text = System.Text.RegularExpressions.Regex.Replace(text, @"<\s*head\b[^>]*>.*?<\s*/\s*head\s*>", "", options);
+                text = System.Text.RegularExpressions.Regex.Replace(text, @"<\s*script\b[^>]*>.*?<\s*/\s*script\s*>", "", options);
+                text = System.Text.RegularExpressions.Regex.Replace(text, @"<\s*style\b[^>]*>.*?<\s*/\s*style\s*>", "", options);
+
+                var htmlChunks = ExtractHtmlBlockText(text);
+                if (htmlChunks.Count > 0)
+                    return SplitOversizedChunks(htmlChunks, chunkSize);
+                return SplitChunks(text, chunkSize, byParagraph, separator);
+            }
+
+            var markerChunks = SplitByStructureMarkers(text, extension, chunkSize);
+            if (markerChunks != null)
+                return markerChunks;
+
+            return SplitChunks(text, chunkSize, byParagraph, separator);
+        }
+
+        /// <summary>超长块按 chunkSize 兜底二次切分，保证单块不超过限制</summary>
+        private static List<string> SplitOversizedChunks(List<string> chunks, int chunkSize)
+        {
+            var result = new List<string>();
+            foreach (var c in chunks)
+            {
+                if (c.Length <= chunkSize) { result.Add(c); continue; }
+                result.AddRange(SplitChunks(c, chunkSize, false, ""));
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 按结构性标记切分：Markdown 以标题（# 开头）与横线（---/***/___）作为块边界；
+        /// TXT 仅当同时检测到 "#" 开头与 "---" 横线时，忽略段落符、纯以横线作为分块依据。
+        /// 无可用标记返回 null，表示回退常规切分。
+        /// </summary>
+        private static List<string>? SplitByStructureMarkers(string text, string extension, int chunkSize)
+        {
+            bool isMarkdown = extension.Equals(".md", StringComparison.OrdinalIgnoreCase)
+                              || extension.Equals(".markdown", StringComparison.OrdinalIgnoreCase);
+            bool isTxt = extension.Equals(".txt", StringComparison.OrdinalIgnoreCase);
+            if (!isMarkdown && !isTxt) return null;
+
+            string[] lines = text.Replace("\r\n", "\n").Split('\n');
+
+            bool hasHash = false, hasHr = false;
+            foreach (var line in lines)
+            {
+                string t = line.Trim();
+                if (t.StartsWith("#")) hasHash = true;
+                else if (IsHorizontalRuleLine(t)) hasHr = true;
+                if (hasHash && hasHr) break;
+            }
+
+            if (isTxt && !(hasHash && hasHr)) return null; // TXT 需同时具备 # 与 --- 才结构化
+            if (isMarkdown && !(hasHash || hasHr)) return null;
+
+            var blocks = new List<string>();
+            var current = new List<string>();
+            foreach (var line in lines)
+            {
+                string t = line.Trim();
+                bool isHr = IsHorizontalRuleLine(t);
+                bool isHeading = isMarkdown && t.StartsWith("#");
+
+                if ((isHr || isHeading) && current.Count > 0)
+                {
+                    string blockText = string.Join("\n", current).Trim();
+                    if (blockText.Length > 0) blocks.Add(blockText);
+                    current.Clear();
+                }
+                if (!isHr) // 横线本身不进内容
+                    current.Add(line);
+            }
+            if (current.Count > 0)
+            {
+                string tail = string.Join("\n", current).Trim();
+                if (tail.Length > 0) blocks.Add(tail);
+            }
+
+            if (blocks.Count == 0) return null;
+            return SplitOversizedChunks(blocks, chunkSize);
+        }
+
+        /// <summary>判断是否为 Markdown 分隔横线：≥3 个连续相同字符（-、* 或 _）</summary>
+        private static bool IsHorizontalRuleLine(string trimmed)
+        {
+            if (trimmed.Length < 3) return false;
+            char c = trimmed[0];
+            if (c != '-' && c != '*' && c != '_') return false;
+            foreach (char ch in trimmed)
+                if (ch != c) return false;
+            return true;
+        }
+
+        /// <summary>按块级标签从 HTML 中提取正文：每个块级元素的内部纯文本作为一条切片。</summary>
+        private static List<string> ExtractHtmlBlockText(string html)
+        {
+            var blockTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "p", "div", "section", "article", "main", "aside", "header", "footer", "nav",
+                "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "dl", "dt", "dd",
+                "blockquote", "pre", "figure", "figcaption", "table", "caption",
+                "tr", "td", "th", "address", "details", "summary"
+            };
+
+            var chunks = new List<string>();
+            var stack = new List<(string Tag, System.Text.StringBuilder Buf)>();
+            var tagRegex = new System.Text.RegularExpressions.Regex("<[^>]+>");
+            int last = 0;
+
+            foreach (System.Text.RegularExpressions.Match m in tagRegex.Matches(html))
+            {
+                if (m.Index > last && stack.Count > 0)
+                    stack[stack.Count - 1].Buf.Append(html, last, m.Index - last);
+                last = m.Index + m.Length;
+
+                string tag = m.Value;
+                bool closing = tag.Length >= 2 && tag[1] == '/';
+                string name = tag.TrimStart('<', '/').TrimEnd('>').Trim();
+                int spaceIdx = name.IndexOfAny(new[] { ' ', '\t', '\r', '\n' });
+                if (spaceIdx >= 0) name = name.Substring(0, spaceIdx);
+
+                if (closing)
+                {
+                    if (stack.Count > 0 && stack[stack.Count - 1].Tag.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var (_, buf) = stack[stack.Count - 1];
+                        stack.RemoveAt(stack.Count - 1);
+                        string innerText = FlushHtmlInnerText(buf.ToString());
+                        if (innerText.Length > 0) chunks.Add(innerText);
+                    }
+                }
+                else if (blockTags.Contains(name))
+                {
+                    stack.Add((name, new System.Text.StringBuilder()));
+                }
+            }
+
+            if (last < html.Length && stack.Count > 0)
+                stack[stack.Count - 1].Buf.Append(html, last, html.Length - last);
+
+            // 未闭合的残留块统一收口
+            for (int i = stack.Count - 1; i >= 0; i--)
+            {
+                string innerText = FlushHtmlInnerText(stack[i].Buf.ToString());
+                if (innerText.Length > 0) chunks.Add(innerText);
+            }
+            return chunks;
+        }
+
+        /// <summary>把块级元素内部原始 HTML 规整为纯文本：去除内联标签、反转义实体、压缩空行。</summary>
+        private static string FlushHtmlInnerText(string raw)
+        {
+            string text = System.Text.RegularExpressions.Regex.Replace(raw, "<[^>]+>", "");
+            text = System.Net.WebUtility.HtmlDecode(text);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"\r\n", "\n");
+            text = System.Text.RegularExpressions.Regex.Replace(text, "[ \t\u00A0]+", " ");
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"\n{2,}", "\n");
+            return text.Trim();
         }
 
         /// <summary>
@@ -2570,6 +2771,11 @@ namespace C99
             if (KbTopKText != null) KbTopKText.Text = ((int)e.NewValue).ToString();
         }
 
+        private void OnKbThresholdChanged(object sender, RangeBaseValueChangedEventArgs e)
+        {
+            if (KbThresholdText != null) KbThresholdText.Text = $"{(int)e.NewValue}%";
+        }
+
         private void OnKbParallelCountChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
             if (KbParallelCountSlider != null && KbParallelCountText != null)
@@ -2590,25 +2796,28 @@ namespace C99
             // 回车时在 OnKbSearch 里处理；这里仅清空结果
         }
 
-        private async void OnKbSearch(object sender, RoutedEventArgs e)
+        private async void OnKbSearch(object sender, RoutedEventArgs e) => await SearchKbAsync();
+
+        /// <summary>执行召回检索并填充结果列表；返回是否成功</summary>
+        private async Task<bool> SearchKbAsync()
         {
             string query = KbQueryBox.Text.Trim();
             if (string.IsNullOrEmpty(query))
             {
                 await ShowDialogAsync("提示", "请输入查询内容");
-                return;
+                return false;
             }
             bool ok = await EnsureKbStoreConnected();
             if (!ok)
             {
                 await ShowDialogAsync("错误", "向量数据库未连接");
-                return;
+                return false;
             }
             string collection = GetCurrentCollectionName();
             if (string.IsNullOrEmpty(collection))
             {
                 await ShowDialogAsync("提示", "请先选择集合");
-                return;
+                return false;
             }
 
             int topK = (int)KbTopKSlider.Value;
@@ -2627,27 +2836,76 @@ namespace C99
                 }
 
                 var results = await store.SearchAsync(collection, queryVec, topK);
+                double threshold = KbThresholdSlider.Value;
+                if (threshold > 0)
+                    results = results.Where(r => r.Score >= threshold / 100.0).ToList();
                 KbResultsList.Items.Clear();
                 if (results.Count == 0)
                 {
                     KbResultSummary.Text = "未找到相似内容";
-                    return;
+                    return true;
                 }
                 foreach (var r in results)
                 {
-                    var title = r.Content.Length > 80 ? r.Content[..80] : r.Content;
-                    KbResultsList.Items.Add(new
+                    KbResultsList.Items.Add(new KbResultItem
                     {
-                        Title = title,
+                        Id = r.Id,
+                        Source = GetKbSourceFile(r),
+                        Title = r.Content.Length > 80 ? r.Content[..80] : r.Content,
                         Score = $"相似度 {r.Score:F4}",
                         Preview = r.Content.Length > 200 ? r.Content[..200] : r.Content
                     });
                 }
                 KbResultSummary.Text = $"找到 {results.Count} 条结果（Top-{topK}）";
+                return true;
             }
             catch (Exception ex)
             {
                 KbResultSummary.Text = "❌ 检索失败: " + ex.Message;
+                return false;
+            }
+        }
+
+        // ==================== 召回结果删除 ====================
+
+        /// <summary>召回结果多选变化：同步切换删除按钮可用状态</summary>
+        private void OnKbResultsSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (KbDeleteResultsBtn == null) return;
+            KbDeleteResultsBtn.IsEnabled = KbResultsList.SelectedItems.Count > 0;
+        }
+
+        /// <summary>批量删除选中召回结果：先弹确认框再逐个删除切片，完成后再刷新当前召回</summary>
+        private async void OnKbDeleteSelectedResults(object sender, RoutedEventArgs e)
+        {
+            var selected = KbResultsList.SelectedItems.Cast<KbResultItem>().ToList();
+            if (selected.Count == 0)
+            {
+                await ShowDialogAsync("提示", "请先勾选要删除的检索结果");
+                return;
+            }
+
+            bool? result = await ShowYesNoDialogAsync("删除召回结果",
+                $"确定删除选中的 {selected.Count} 条检索结果吗？\n对应切片将从知识库集合中移除，此操作不可恢复。");
+            if (result != true) return;
+
+            string name = GetCurrentCollectionName();
+            if (string.IsNullOrEmpty(name) || _kbStore == null || !_kbStore.IsConnected) return;
+
+            int deleted = 0;
+            foreach (var item in selected)
+            {
+                try { if (await _kbStore.DeleteAsync(name, item.Id)) deleted++; } catch { }
+            }
+            if (deleted > 0)
+            {
+                KbDbStatus.Text = $"🗑 已从召回结果中删除 {deleted} 条切片";
+                if (KbQueryBox.Text.Trim().Length > 0)
+                    await SearchKbAsync();
+            }
+            else
+            {
+                await ShowDialogAsync("提示", "未删除任何条目，请确认向量数据库已连接");
             }
         }
 
@@ -4600,7 +4858,9 @@ namespace C99
                 try
                 {
                     using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-                    string modelsUrl = _config.ExternalLLMApiUrl.TrimEnd('/') + "/models";
+                    string extBase = StripChatCompletionsPath(_config.ExternalLLMApiUrl);
+                    string extChatUrl = EnsureChatCompletionsUrl(extBase);
+                    string modelsUrl = extBase + "/models";
                     using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, modelsUrl);
                     if (!string.IsNullOrEmpty(_config.ExternalLLMApiKey))
                         req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {_config.ExternalLLMApiKey}");
@@ -4619,10 +4879,10 @@ namespace C99
                                     string modelName = id.GetString() ?? "";
                                     if (string.IsNullOrEmpty(modelName)) continue;
 
-                                    string dedupeKey = _config.ExternalLLMApiUrl + "|" + modelName;
+                                    string dedupeKey = extBase + "|" + modelName;
                                     if (!seenKeys.Add(dedupeKey)) continue;
 
-                                    availableModels.Add(($"[外部] {modelName}", _config.ExternalLLMApiUrl, modelName, _config.ExternalLLMApiKey ?? ""));
+                                    availableModels.Add(($"[外部] {modelName}", extChatUrl, modelName, _config.ExternalLLMApiKey ?? ""));
                                 }
                             }
                         }
@@ -4631,10 +4891,10 @@ namespace C99
                 catch { }
             }
 
-            // 3. 获取已启用的端点（用于保持勾选状态）
+            // 3. 获取已启用的端点（用于保持勾选状态；兼容旧配置中仅填基地址的情况）
             var enabledEndpoints = _dreamConfig.GatewayConfig.OneToManyEndpoints
                 .Where(ep => ep.Enabled)
-                .Select(ep => ep.ApiUrl + "|" + ep.ModelName)
+                .Select(ep => EnsureChatCompletionsUrl(ep.ApiUrl) + "|" + ep.ModelName)
                 .ToHashSet();
 
             // 4. 重建端点列表（保留已启用的）
@@ -4663,6 +4923,26 @@ namespace C99
             SaveDreamFactoryConfig();
 
             ShowToast($"已枚举 {availableModels.Count} 个可用模型");
+        }
+
+        /// <summary>把地址规范化为完整 chat 地址：基地址自动补 /chat/completions</summary>
+        private static string EnsureChatCompletionsUrl(string url)
+        {
+            string u = url?.Trim().TrimEnd('/') ?? "";
+            if (string.IsNullOrEmpty(u)) return u;
+            return u.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase)
+                ? u
+                : u + "/chat/completions";
+        }
+
+        /// <summary>去掉末尾的 /chat/completions，返回上游基地址（不含则原样返回）</summary>
+        private static string StripChatCompletionsPath(string url)
+        {
+            string u = url?.Trim().TrimEnd('/') ?? "";
+            if (string.IsNullOrEmpty(u)) return u;
+            if (u.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+                u = u[..u.LastIndexOf("/chat/completions", StringComparison.OrdinalIgnoreCase)].TrimEnd('/');
+            return u;
         }
 
         private void RefreshGatewayModelsListUI()
