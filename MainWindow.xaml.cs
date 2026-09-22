@@ -242,7 +242,7 @@ namespace C99
                 if (!string.IsNullOrEmpty(_config.LLMSearchPath))
                 {
                     LLMSearchPath.Text = _config.LLMSearchPath;
-                    RefreshModelSubDirs(_config.LLMSearchPath, _config.SelectedModelSubDir);
+                    RefreshModelSubDirs(_config.LLMSearchPath, _config.SelectedModelSubDirFullPath);
                 }
 
                 // 应用各引擎的启动器目录
@@ -430,7 +430,7 @@ namespace C99
         }
 
         /// <summary>刷新模型子目录下拉列表</summary>
-        private void RefreshModelSubDirs(string rootPath, string? selectedSubDir)
+        private void RefreshModelSubDirs(string rootPath, string? selectedSubDirFullPath)
         {
             try
             {
@@ -452,8 +452,8 @@ namespace C99
                         Content = Path.GetFileName(rootPath),
                         Tag = rootPath
                     });
-                    if (!string.IsNullOrEmpty(selectedSubDir) &&
-                        string.Equals(selectedSubDir, rootPath, StringComparison.OrdinalIgnoreCase))
+                    if (!string.IsNullOrEmpty(selectedSubDirFullPath) &&
+                        string.Equals(selectedSubDirFullPath, rootPath, StringComparison.OrdinalIgnoreCase))
                     {
                         ModelSubDirSelector.SelectedIndex = 0;
                     }
@@ -461,6 +461,14 @@ namespace C99
                 }
 
                 int selectedIdx = -1;
+                string? selectedDirName = null;
+                
+                // 如果传入了全路径，尝试提取目录名用于回退匹配
+                if (!string.IsNullOrEmpty(selectedSubDirFullPath))
+                {
+                    selectedDirName = Path.GetFileName(selectedSubDirFullPath);
+                }
+
                 for (int i = 0; i < subDirs.Length; i++)
                 {
                     string dirName = Path.GetFileName(subDirs[i]);
@@ -471,10 +479,26 @@ namespace C99
                     };
                     ModelSubDirSelector.Items.Add(item);
 
-                    if (!string.IsNullOrEmpty(selectedSubDir) &&
-                        string.Equals(subDirs[i], selectedSubDir, StringComparison.OrdinalIgnoreCase))
+                    // 优先匹配全路径
+                    if (!string.IsNullOrEmpty(selectedSubDirFullPath) &&
+                        string.Equals(subDirs[i], selectedSubDirFullPath, StringComparison.OrdinalIgnoreCase))
                     {
                         selectedIdx = i;
+                    }
+                    // 如果全路径不匹配，但传入了目录名，尝试按目录名匹配（处理根目录变更的情况）
+                    else if (selectedIdx < 0 && !string.IsNullOrEmpty(selectedDirName) &&
+                        string.Equals(dirName, selectedDirName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // 验证该目录是否确实存在于当前 rootPath 下
+                        string matchedFullPath = Path.Combine(rootPath, dirName);
+                        if (Directory.Exists(matchedFullPath))
+                        {
+                            selectedIdx = i;
+                            // 更新配置中的全路径
+                            _config.SelectedModelSubDirFullPath = matchedFullPath;
+                            _config.SelectedModelSubDir = dirName;
+                            SaveConfig();
+                        }
                     }
                 }
 

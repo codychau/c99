@@ -70,7 +70,8 @@ namespace C99.Services
         {
             _config = config;
             _base64Encoding = config.Base64Encoding;
-            _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
+            int timeoutSeconds = config.ModelSource == "BuiltIn" ? 600 : 120;
+            _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(timeoutSeconds) };
             _gateway = new ModelGateway(config);
         }
 
